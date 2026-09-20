@@ -84,6 +84,9 @@ class GatewayForegroundService : Service() {
                 val application =
                     application as SmsGatewayApplication
 
+                application.gatewaySettingsStore
+                    .setGatewayDesiredEnabled(true)
+
                 GatewayServiceState.setConnection(
                     GatewayConnectionPhase.REGISTERING,
                     "Validando identidad del gateway…"
@@ -368,13 +371,23 @@ class GatewayForegroundService : Service() {
         }
 
     private fun stopGateway() {
-        cleanupConnection()
-        GatewayServiceState.setRunning(false)
-        ServiceCompat.stopForeground(
-            this,
-            ServiceCompat.STOP_FOREGROUND_REMOVE
-        )
-        stopSelf()
+        serviceScope.launch {
+            try {
+                val application =
+                    application as SmsGatewayApplication
+
+                application.gatewaySettingsStore
+                    .setGatewayDesiredEnabled(false)
+            } finally {
+                cleanupConnection()
+                GatewayServiceState.setRunning(false)
+                ServiceCompat.stopForeground(
+                    this@GatewayForegroundService,
+                    ServiceCompat.STOP_FOREGROUND_REMOVE
+                )
+                stopSelf()
+            }
+        }
     }
 
     private fun cleanupConnection() {

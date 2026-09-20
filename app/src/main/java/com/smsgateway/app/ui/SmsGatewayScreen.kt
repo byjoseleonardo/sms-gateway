@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.smsgateway.app.BuildConfig
 import com.smsgateway.app.data.settings.GatewaySettings
 import com.smsgateway.app.data.settings.normalizeServerUrl
 import com.smsgateway.app.domain.SmsDispatchResult
@@ -127,7 +128,7 @@ fun SmsGatewayScreen(
 
             item {
                 Text(
-                    text = "v0.8 · reconciliación segura",
+                    text = "v${BuildConfig.VERSION_NAME} · reconciliación segura",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

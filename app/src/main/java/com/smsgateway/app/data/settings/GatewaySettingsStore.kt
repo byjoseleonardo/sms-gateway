@@ -1,6 +1,7 @@
 package com.smsgateway.app.data.settings
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -21,7 +22,9 @@ class GatewaySettingsStore(
                     ?: GatewaySettings.DEFAULT_SERVER_URL,
                 gatewayId = preferences[GATEWAY_ID]
                     ?: GatewaySettings.DEFAULT_GATEWAY_ID,
-                authToken = preferences[AUTH_TOKEN]
+                authToken = preferences[AUTH_TOKEN],
+                gatewayDesiredEnabled =
+                    preferences[GATEWAY_DESIRED_ENABLED] ?: false
             )
         }
 
@@ -65,9 +68,17 @@ class GatewaySettingsStore(
         }
     }
 
+    suspend fun setGatewayDesiredEnabled(enabled: Boolean) {
+        context.gatewaySettingsDataStore.edit { preferences ->
+            preferences[GATEWAY_DESIRED_ENABLED] = enabled
+        }
+    }
+
     private companion object {
         val SERVER_URL = stringPreferencesKey("server_url")
         val GATEWAY_ID = stringPreferencesKey("gateway_id")
         val AUTH_TOKEN = stringPreferencesKey("auth_token")
+        val GATEWAY_DESIRED_ENABLED =
+            booleanPreferencesKey("gateway_desired_enabled")
     }
 }
