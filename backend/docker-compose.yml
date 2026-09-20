@@ -4,18 +4,52 @@ services:
     container_name: sms-gateway-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: smsgateway
-      POSTGRES_PASSWORD: smsgateway_dev
-      POSTGRES_DB: smsgateway
+      POSTGRES_USER: ${POSTGRES_USER:-smsgateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smsgateway_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-smsgateway}
     ports:
-      - "54329:5432"
+      - "127.0.0.1:54329:5432"
     volumes:
       - sms_gateway_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smsgateway -d smsgateway"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-smsgateway} -d ${POSTGRES_DB:-smsgateway}"
+        ]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smsgateway}:${POSTGRES_PASSWORD:-smsgateway_dev}@postgres:5432/${POSTGRES_DB:-smsgateway}?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      target: runtime
+    container_name: sms-gateway-backend
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smsgateway}:${POSTGRES_PASSWORD:-smsgateway_dev}@postgres:5432/${POSTGRES_DB:-smsgateway}?schema=public
+      OPERATOR_API_KEY: ${OPERATOR_API_KEY:?OPERATOR_API_KEY is required}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   sms_gateway_pgdata:

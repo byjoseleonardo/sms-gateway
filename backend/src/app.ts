@@ -8,7 +8,7 @@ import { gatewayAuth } from "./gateways/gatewayAuth.js";
 import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 
-export const APP_VERSION = "0.9.0";
+export const APP_VERSION = "0.10.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),

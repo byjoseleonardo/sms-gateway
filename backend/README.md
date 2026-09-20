@@ -12,12 +12,30 @@ Backend de control para el gateway Android.
 - Prisma ORM 7.10
 - PostgreSQL 17
 
-## PostgreSQL local
+## Stack Docker local
+
+Define primero la clave de operador en la terminal:
 
 ```powershell
-docker compose up -d
+$env:OPERATOR_API_KEY = "<clave-larga-y-aleatoria>"
+```
+
+Levanta PostgreSQL, ejecuta migraciones y arranca el backend:
+
+```powershell
+docker compose up -d --build
 docker compose ps
 ```
+
+Servicios:
+
+- `postgres`: PostgreSQL 17
+- `migrate`: ejecuta `prisma migrate deploy` y finaliza
+- `backend`: Node.js 24, expuesto en `127.0.0.1:3000`
+
+El backend solo arranca cuando PostgreSQL está healthy y las migraciones terminaron correctamente.
+
+## PostgreSQL local
 
 El contenedor publica PostgreSQL en:
 
@@ -80,15 +98,14 @@ importa de forma idempotente los antiguos:
 
 Se conserva únicamente para transición/desarrollo. El runtime ya no depende de esos archivos.
 
-## Desarrollo
+## Desarrollo sin contenedor de aplicación
 
-Antes de arrancar el backend define una clave de operador de al menos 32 caracteres.
-No la guardes en Git.
+Si quieres ejecutar Node directamente en Windows:
 
 ```powershell
 $env:OPERATOR_API_KEY = "<clave-larga-y-aleatoria>"
 npm install
-docker compose up -d
+docker compose up -d postgres
 npm run dev
 ```
 
