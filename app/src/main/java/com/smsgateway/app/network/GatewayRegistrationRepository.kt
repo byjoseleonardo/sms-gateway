@@ -94,10 +94,15 @@ class GatewayRegistrationRepository(
             Settings.Secure.ANDROID_ID
         ) ?: "unknown-device"
 
+        val enrollmentKey = settings.enrollmentKey
+            ?.takeIf(String::isNotBlank)
+            ?: error("Configura la clave de enrolamiento antes de registrar el gateway")
+
         val response = GatewayApiFactory
             .create(settings.serverUrl)
             .register(
-                GatewayRegistrationRequest(
+                enrollmentKey = enrollmentKey,
+                body = GatewayRegistrationRequest(
                     gatewayId = settings.gatewayId,
                     deviceId = deviceId,
                     deviceModel = Build.MODEL,
@@ -107,9 +112,11 @@ class GatewayRegistrationRepository(
             )
 
         settingsStore.saveToken(response.token)
+        settingsStore.clearEnrollmentKey()
 
         return settings.copy(
-            authToken = response.token
+            authToken = response.token,
+            enrollmentKey = null
         )
     }
 }

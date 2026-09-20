@@ -63,6 +63,7 @@ interface GatewayApi {
 
     @POST("api/v1/gateways/register")
     suspend fun register(
+        @Header("x-gateway-enrollment-key") enrollmentKey: String,
         @Body body: GatewayRegistrationRequest
     ): GatewayRegistrationResponse
 

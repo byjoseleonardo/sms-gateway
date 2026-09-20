@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.smsgateway.app.BuildConfig
@@ -59,6 +60,7 @@ fun SmsGatewayScreen(
     gatewaySettings: Flow<GatewaySettings>,
     sendSms: suspend (SmsJobRequest) -> SmsDispatchResult,
     saveGatewaySettings: suspend (String, String) -> Unit,
+    saveEnrollmentKey: suspend (String) -> Unit,
     checkBackend: suspend (GatewaySettings) -> BackendHealthResult
 ) {
     val context = LocalContext.current
@@ -70,6 +72,7 @@ fun SmsGatewayScreen(
 
     var serverUrl by remember { mutableStateOf(storedSettings.serverUrl) }
     var gatewayId by remember { mutableStateOf(storedSettings.gatewayId) }
+    var enrollmentKey by remember { mutableStateOf("") }
     var backendMessage by remember { mutableStateOf("Sin probar") }
     var backendConnected by remember { mutableStateOf<Boolean?>(null) }
     var isCheckingBackend by remember { mutableStateOf(false) }
@@ -137,6 +140,7 @@ fun SmsGatewayScreen(
                 BackendConnectionCard(
                     serverUrl = serverUrl,
                     gatewayId = gatewayId,
+                    enrollmentKey = enrollmentKey,
                     statusMessage = backendMessage,
                     connected = backendConnected,
                     checking = isCheckingBackend,
@@ -149,6 +153,9 @@ fun SmsGatewayScreen(
                         gatewayId = it
                         backendConnected = null
                         backendMessage = "Cambios sin probar"
+                    },
+                    onEnrollmentKeyChange = {
+                        enrollmentKey = it
                     },
                     onSaveAndCheck = {
                         if (!isCheckingBackend) {
@@ -170,6 +177,11 @@ fun SmsGatewayScreen(
                                         normalizedSettings.serverUrl,
                                         normalizedSettings.gatewayId
                                     )
+
+                                    if (enrollmentKey.isNotBlank()) {
+                                        saveEnrollmentKey(enrollmentKey)
+                                        enrollmentKey = ""
+                                    }
 
                                     serverUrl = normalizedSettings.serverUrl
                                     gatewayId = normalizedSettings.gatewayId
@@ -335,11 +347,13 @@ fun SmsGatewayScreen(
 private fun BackendConnectionCard(
     serverUrl: String,
     gatewayId: String,
+    enrollmentKey: String,
     statusMessage: String,
     connected: Boolean?,
     checking: Boolean,
     onServerUrlChange: (String) -> Unit,
     onGatewayIdChange: (String) -> Unit,
+    onEnrollmentKeyChange: (String) -> Unit,
     onSaveAndCheck: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -365,6 +379,15 @@ private fun BackendConnectionCard(
                 onValueChange = onGatewayIdChange,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Gateway ID") },
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = enrollmentKey,
+                onValueChange = onEnrollmentKeyChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Clave de enrolamiento (solo registro)") },
+                visualTransformation = PasswordVisualTransformation(),
                 singleLine = true
             )
 

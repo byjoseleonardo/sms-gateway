@@ -18,6 +18,7 @@ Define primero la clave de operador en la terminal:
 
 ```powershell
 $env:OPERATOR_API_KEY = "<clave-larga-y-aleatoria>"
+$env:GATEWAY_ENROLLMENT_KEY = "<otra-clave-larga-y-aleatoria>"
 ```
 
 Levanta PostgreSQL, ejecuta migraciones y arranca el backend:
@@ -120,6 +121,12 @@ Health:
 
 ### Gateway
 
+El registro inicial requiere:
+
+```http
+x-gateway-enrollment-key: <GATEWAY_ENROLLMENT_KEY>
+```
+
 - `POST /api/v1/gateways/register`
 - `POST /api/v1/gateways/heartbeat`
 - `GET /api/v1/gateways/:gatewayId/status`
@@ -175,7 +182,8 @@ las reglas críticas de concurrencia/idempotencia.
 
 ## Seguridad
 
-- El token del gateway y la API key de operador son credenciales distintas.
+- El token del gateway, la clave de enrolamiento y la API key de operador son credenciales distintas.
+- La clave de enrolamiento solo autoriza registro/rotación; Android la elimina después de obtener el token operativo.
 - La API key de operador nunca se guarda en el repositorio.
 - Los endpoints Android siguen autenticándose con `gatewayId + token`.
 - Health permanece público para monitorización.

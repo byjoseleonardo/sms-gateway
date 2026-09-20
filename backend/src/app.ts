@@ -7,8 +7,9 @@ import {
 import { gatewayAuth } from "./gateways/gatewayAuth.js";
 import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
+import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.10.0";
+export const APP_VERSION = "0.11.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -38,7 +39,8 @@ export function createApp(
   gatewayRegistry: GatewayRegistry,
   messageRegistry: SmsMessageRegistry,
   onMessageAvailable: (gatewayId: string, jobId: string) => void,
-  operatorApiKey: string
+  operatorApiKey: string,
+  gatewayEnrollmentKey: string
 ) {
   const app = express();
 
@@ -46,6 +48,7 @@ export function createApp(
   app.use(express.json({ limit: "64kb" }));
 
   const operatorAuth = operatorApiKeyAuth(operatorApiKey);
+  const enrollmentAuth = gatewayEnrollmentAuth(gatewayEnrollmentKey);
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -65,7 +68,7 @@ export function createApp(
     });
   });
 
-  app.post("/api/v1/gateways/register", async (req, res, next) => {
+  app.post("/api/v1/gateways/register", enrollmentAuth, async (req, res, next) => {
     const parsed = registrationSchema.safeParse(req.body);
 
     if (!parsed.success) {

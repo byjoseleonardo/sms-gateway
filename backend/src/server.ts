@@ -9,7 +9,8 @@ import { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   HOST: z.string().min(1).default("127.0.0.1"),
-  OPERATOR_API_KEY: z.string().min(32)
+  OPERATOR_API_KEY: z.string().min(32),
+  GATEWAY_ENROLLMENT_KEY: z.string().min(32)
 });
 
 const env = envSchema.parse(process.env);
@@ -28,7 +29,8 @@ const app = createApp(
       { jobId }
     );
   },
-  env.OPERATOR_API_KEY
+  env.OPERATOR_API_KEY,
+  env.GATEWAY_ENROLLMENT_KEY
 );
 
 const httpServer = createServer(app);

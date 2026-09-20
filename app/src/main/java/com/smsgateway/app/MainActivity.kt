@@ -19,6 +19,7 @@ class MainActivity : ComponentActivity() {
                     gatewaySettings = application.gatewaySettingsStore.settings,
                     sendSms = application.sendSmsUseCase::execute,
                     saveGatewaySettings = application.gatewaySettingsStore::save,
+                    saveEnrollmentKey = application.gatewaySettingsStore::saveEnrollmentKey,
                     checkBackend = application.backendHealthRepository::check
                 )
             }

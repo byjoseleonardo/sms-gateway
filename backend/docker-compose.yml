@@ -43,6 +43,7 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-smsgateway}:${POSTGRES_PASSWORD:-smsgateway_dev}@postgres:5432/${POSTGRES_DB:-smsgateway}?schema=public
       OPERATOR_API_KEY: ${OPERATOR_API_KEY:?OPERATOR_API_KEY is required}
+      GATEWAY_ENROLLMENT_KEY: ${GATEWAY_ENROLLMENT_KEY:?GATEWAY_ENROLLMENT_KEY is required}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

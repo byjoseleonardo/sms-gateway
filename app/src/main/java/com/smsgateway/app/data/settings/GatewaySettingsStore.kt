@@ -23,6 +23,8 @@ class GatewaySettingsStore(
         context.gatewaySettingsDataStore.data.map { preferences ->
             val encryptedToken =
                 preferences[AUTH_TOKEN_ENCRYPTED]
+            val encryptedEnrollment =
+                preferences[ENROLLMENT_KEY_ENCRYPTED]
 
             val token = when {
                 !encryptedToken.isNullOrBlank() ->
@@ -34,12 +36,22 @@ class GatewaySettingsStore(
                     preferences[AUTH_TOKEN_LEGACY]
             }
 
+            val enrollmentKey =
+                encryptedEnrollment
+                    ?.takeIf(String::isNotBlank)
+                    ?.let {
+                        runCatching {
+                            tokenCipher.decrypt(it)
+                        }.getOrNull()
+                    }
+
             GatewaySettings(
                 serverUrl = preferences[SERVER_URL]
                     ?: GatewaySettings.DEFAULT_SERVER_URL,
                 gatewayId = preferences[GATEWAY_ID]
                     ?: GatewaySettings.DEFAULT_GATEWAY_ID,
                 authToken = token,
+                enrollmentKey = enrollmentKey,
                 gatewayDesiredEnabled =
                     preferences[GATEWAY_DESIRED_ENABLED] ?: false
             )
@@ -80,6 +92,25 @@ class GatewaySettingsStore(
         context.gatewaySettingsDataStore.edit { preferences ->
             preferences[AUTH_TOKEN_ENCRYPTED] = encrypted
             preferences.remove(AUTH_TOKEN_LEGACY)
+        }
+    }
+
+    suspend fun saveEnrollmentKey(enrollmentKey: String) {
+        val normalized = enrollmentKey.trim()
+        require(normalized.length >= 32) {
+            "La clave de enrolamiento debe tener al menos 32 caracteres"
+        }
+
+        val encrypted = tokenCipher.encrypt(normalized)
+
+        context.gatewaySettingsDataStore.edit { preferences ->
+            preferences[ENROLLMENT_KEY_ENCRYPTED] = encrypted
+        }
+    }
+
+    suspend fun clearEnrollmentKey() {
+        context.gatewaySettingsDataStore.edit { preferences ->
+            preferences.remove(ENROLLMENT_KEY_ENCRYPTED)
         }
     }
 
@@ -137,6 +168,8 @@ class GatewaySettingsStore(
         val AUTH_TOKEN_LEGACY = stringPreferencesKey("auth_token")
         val AUTH_TOKEN_ENCRYPTED =
             stringPreferencesKey("auth_token_encrypted")
+        val ENROLLMENT_KEY_ENCRYPTED =
+            stringPreferencesKey("enrollment_key_encrypted")
         val GATEWAY_DESIRED_ENABLED =
             booleanPreferencesKey("gateway_desired_enabled")
     }

@@ -4,6 +4,7 @@ data class GatewaySettings(
     val serverUrl: String = DEFAULT_SERVER_URL,
     val gatewayId: String = DEFAULT_GATEWAY_ID,
     val authToken: String? = null,
+    val enrollmentKey: String? = null,
     val gatewayDesiredEnabled: Boolean = false
 ) {
     companion object {
