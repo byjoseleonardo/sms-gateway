@@ -18,7 +18,9 @@ import com.smsgateway.app.MainActivity
 import com.smsgateway.app.SmsGatewayApplication
 import com.smsgateway.app.domain.SmsDispatchResult
 import com.smsgateway.app.domain.SmsJobRequest
+import com.smsgateway.app.domain.SmsJobStatus
 import com.smsgateway.app.network.GatewayRegistrationRepository
+import com.smsgateway.app.network.RemoteSmsJobRepository
 import com.smsgateway.app.network.RemoteSmsStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import java.time.Instant
 
 class GatewayForegroundService : Service() {
 
@@ -98,6 +101,8 @@ class GatewayForegroundService : Service() {
 
                 val registeredSettings =
                     registrationRepository.ensureRegistered(settings)
+
+                reconcilePendingJobs(application)
 
                 GatewayServiceState.setConnection(
                     GatewayConnectionPhase.CONNECTING,
@@ -192,6 +197,31 @@ class GatewayForegroundService : Service() {
                         TAG,
                         "Remote SMS already exists locally: ${dispatch.jobId}"
                     )
+
+                    val localJob =
+                        application.smsJobStore.get(dispatch.jobId)
+
+                    if (
+                        localJob?.status == SmsJobStatus.SENDING ||
+                        localJob?.status ==
+                            SmsJobStatus.RECONCILIATION_REQUIRED
+                    ) {
+                        val reason =
+                            "Job remoto reclamado pero el resultado local es incierto"
+
+                        application.smsJobStore
+                            .markReconciliationRequired(
+                                dispatch.jobId,
+                                reason
+                            )
+
+                        application.remoteSmsJobRepository
+                            .reportStatus(
+                                jobId = dispatch.jobId,
+                                status = RemoteSmsStatus.AMBIGUOUS,
+                                error = reason
+                            )
+                    }
                 }
 
                 is SmsDispatchResult.Failed -> {
@@ -221,6 +251,121 @@ class GatewayForegroundService : Service() {
             )
         }
     }
+
+    private suspend fun reconcilePendingJobs(
+        application: SmsGatewayApplication
+    ) {
+        val candidates =
+            application.smsJobStore.getReconciliationCandidates()
+
+        for (job in candidates) {
+            if (
+                !job.id.startsWith(
+                    RemoteSmsJobRepository.REMOTE_JOB_PREFIX
+                )
+            ) {
+                continue
+            }
+
+            try {
+                val remote =
+                    application.remoteSmsJobRepository.getStatus(job.id)
+
+                when (remote.status) {
+                    "SENT" -> {
+                        val sentAt =
+                            parseRemoteTimestamp(remote.sentAt)
+                                ?: System.currentTimeMillis()
+
+                        application.smsJobStore.markSent(
+                            job.id,
+                            sentAt
+                        )
+                    }
+
+                    "DELIVERED" -> {
+                        parseRemoteTimestamp(remote.sentAt)?.let {
+                            application.smsJobStore.markSent(
+                                job.id,
+                                it
+                            )
+                        }
+
+                        val deliveredAt =
+                            parseRemoteTimestamp(remote.deliveredAt)
+                                ?: System.currentTimeMillis()
+
+                        application.smsJobStore.markDelivered(
+                            job.id,
+                            deliveredAt
+                        )
+                    }
+
+                    "FAILED" -> {
+                        application.smsJobStore.markFailed(
+                            job.id,
+                            remote.lastError
+                                ?: "El backend reportó FAILED"
+                        )
+                    }
+
+                    "CLAIMED" -> {
+                        val reason =
+                            "Proceso reiniciado después de reclamar el job; resultado del envío desconocido"
+
+                        application.smsJobStore
+                            .markReconciliationRequired(
+                                job.id,
+                                reason
+                            )
+
+                        application.remoteSmsJobRepository
+                            .reportStatus(
+                                jobId = job.id,
+                                status = RemoteSmsStatus.AMBIGUOUS,
+                                error = reason
+                            )
+                    }
+
+                    "AMBIGUOUS" -> {
+                        application.smsJobStore
+                            .markReconciliationRequired(
+                                job.id,
+                                remote.lastError
+                                    ?: "Backend mantiene el job como ambiguo"
+                            )
+                    }
+
+                    "QUEUED" -> {
+                        application.smsJobStore
+                            .markReconciliationRequired(
+                                job.id,
+                                "El job local estaba enviándose pero el backend sigue en QUEUED"
+                            )
+                    }
+                }
+            } catch (exception: HttpException) {
+                Log.w(
+                    TAG,
+                    "No se pudo reconciliar ${job.id}: HTTP ${exception.code()}",
+                    exception
+                )
+            } catch (exception: Exception) {
+                Log.w(
+                    TAG,
+                    "No se pudo reconciliar ${job.id}",
+                    exception
+                )
+            }
+        }
+    }
+
+    private fun parseRemoteTimestamp(value: String?): Long? =
+        value?.let {
+            runCatching {
+                Instant.parse(it).toEpochMilli()
+            }.getOrNull()
+        }
 
     private fun stopGateway() {
         cleanupConnection()

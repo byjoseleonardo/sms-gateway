@@ -7,6 +7,8 @@ interface SmsJobStore {
 
     suspend fun get(jobId: String): SmsJob?
 
+    suspend fun getReconciliationCandidates(): List<SmsJob>
+
     suspend fun insertIfAbsent(job: SmsJob): Boolean
 
     suspend fun markSending(jobId: String): Boolean

@@ -16,6 +16,9 @@ class RoomSmsJobStore(
     override suspend fun get(jobId: String): SmsJob? =
         dao.get(jobId)?.toDomain()
 
+    override suspend fun getReconciliationCandidates(): List<SmsJob> =
+        dao.getReconciliationCandidates().map(SmsJobEntity::toDomain)
+
     override suspend fun insertIfAbsent(job: SmsJob): Boolean =
         dao.insert(job.toEntity()) != -1L
 

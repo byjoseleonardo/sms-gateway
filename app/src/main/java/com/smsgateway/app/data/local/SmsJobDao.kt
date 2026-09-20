@@ -14,6 +14,16 @@ interface SmsJobDao {
     @Query("SELECT * FROM sms_jobs WHERE id = :jobId LIMIT 1")
     suspend fun get(jobId: String): SmsJobEntity?
 
+    @Query(
+        """
+        SELECT * FROM sms_jobs
+        WHERE id LIKE 'sms_%'
+          AND status IN ('SENDING', 'RECONCILIATION_REQUIRED')
+        ORDER BY createdAt ASC
+        """
+    )
+    suspend fun getReconciliationCandidates(): List<SmsJobEntity>
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(entity: SmsJobEntity): Long
 

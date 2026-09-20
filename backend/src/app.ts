@@ -8,7 +8,7 @@ import {
 import { gatewayAuth } from "./gateways/gatewayAuth.js";
 import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 
-export const APP_VERSION = "0.7.0";
+export const APP_VERSION = "0.8.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -206,6 +206,33 @@ export function createApp(
           status: job.status
         }))
       });
+    }
+  );
+
+  app.get(
+    "/api/v1/gateway/jobs/:jobId",
+    gatewayAuth(gatewayRegistry),
+    async (req, res) => {
+      const gatewayId = res.locals.gatewayId as string;
+      const message = await messageRegistry.get(
+        req.params.jobId as string
+      );
+
+      if (!message) {
+        res.status(404).json({
+          error: "message_not_found"
+        });
+        return;
+      }
+
+      if (message.gatewayId !== gatewayId) {
+        res.status(403).json({
+          error: "message_gateway_mismatch"
+        });
+        return;
+      }
+
+      res.json(message);
     }
   );
 

@@ -47,6 +47,16 @@ data class AvailableRemoteSmsJobsResponse(
     val jobs: List<AvailableRemoteSmsJob>
 )
 
+data class RemoteSmsStateResponse(
+    val id: String,
+    val gatewayId: String,
+    val status: String,
+    val attempts: Int,
+    val sentAt: String?,
+    val deliveredAt: String?,
+    val lastError: String?
+)
+
 interface GatewayApi {
     @GET("health")
     suspend fun health(): HealthResponse
@@ -75,6 +85,13 @@ interface GatewayApi {
         @Header("x-gateway-id") gatewayId: String,
         @Header("Authorization") authorization: String
     ): Response<AvailableRemoteSmsJobsResponse>
+
+    @GET("api/v1/gateway/jobs/{jobId}")
+    suspend fun jobStatus(
+        @Path("jobId") jobId: String,
+        @Header("x-gateway-id") gatewayId: String,
+        @Header("Authorization") authorization: String
+    ): Response<RemoteSmsStateResponse>
 
     @POST("api/v1/gateway/jobs/{jobId}/claim")
     suspend fun claimJob(

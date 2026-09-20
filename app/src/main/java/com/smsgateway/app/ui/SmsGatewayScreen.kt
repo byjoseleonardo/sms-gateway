@@ -127,7 +127,7 @@ fun SmsGatewayScreen(
 
             item {
                 Text(
-                    text = "v0.7 · PostgreSQL + reconciliación",
+                    text = "v0.8 · reconciliación segura",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

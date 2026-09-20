@@ -42,6 +42,29 @@ class RemoteSmsJobRepository(
         return response.body()?.jobs.orEmpty()
     }
 
+    suspend fun getStatus(jobId: String): RemoteSmsStateResponse {
+        val settings = settingsStore.settings.first()
+        val token = requireNotNull(settings.authToken) {
+            "El gateway no tiene token de autenticación"
+        }
+
+        val response = GatewayApiFactory
+            .create(settings.serverUrl)
+            .jobStatus(
+                jobId = jobId,
+                gatewayId = settings.gatewayId,
+                authorization = "Bearer $token"
+            )
+
+        if (!response.isSuccessful) {
+            throw HttpException(response)
+        }
+
+        return requireNotNull(response.body()) {
+            "El backend devolvió un estado remoto vacío"
+        }
+    }
+
     suspend fun claim(jobId: String): RemoteSmsJob {
         val settings = settingsStore.settings.first()
         val token = requireNotNull(settings.authToken) {

@@ -99,6 +99,16 @@ class SendSmsUseCaseTest {
         override suspend fun get(jobId: String): SmsJob? =
             jobs.value.firstOrNull { it.id == jobId }
 
+        override suspend fun getReconciliationCandidates(): List<SmsJob> =
+            jobs.value.filter {
+                it.id.startsWith("sms_") &&
+                    (
+                        it.status == SmsJobStatus.SENDING ||
+                            it.status ==
+                                SmsJobStatus.RECONCILIATION_REQUIRED
+                    )
+            }
+
         override suspend fun insertIfAbsent(job: SmsJob): Boolean {
             if (jobs.value.any { it.id == job.id }) return false
             jobs.value = listOf(job) + jobs.value
