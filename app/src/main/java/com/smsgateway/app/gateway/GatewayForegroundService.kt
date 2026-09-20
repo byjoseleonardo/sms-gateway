@@ -22,10 +22,12 @@ import com.smsgateway.app.domain.SmsJobStatus
 import com.smsgateway.app.network.GatewayRegistrationRepository
 import com.smsgateway.app.network.RemoteSmsJobRepository
 import com.smsgateway.app.network.RemoteSmsStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -80,92 +82,128 @@ class GatewayForegroundService : Service() {
         }
 
         connectionJob = serviceScope.launch {
-            try {
-                val application =
-                    application as SmsGatewayApplication
+            val application =
+                application as SmsGatewayApplication
 
-                application.gatewaySettingsStore
-                    .setGatewayDesiredEnabled(true)
+            application.gatewaySettingsStore
+                .setGatewayDesiredEnabled(true)
 
-                GatewayServiceState.setConnection(
-                    GatewayConnectionPhase.REGISTERING,
-                    "Validando identidad del gateway…"
-                )
+            var retryDelayMs = INITIAL_RETRY_DELAY_MS
 
-                val settings =
-                    application.gatewaySettingsStore.settings.first()
+            while (isActive) {
+                try {
+                    bootstrapConnection(application)
+                    retryDelayMs = INITIAL_RETRY_DELAY_MS
 
-                val registrationRepository =
-                    GatewayRegistrationRepository(
-                        context = applicationContext,
-                        settingsStore =
-                            application.gatewaySettingsStore
+                    // Keep this job alive so repeated START intents cannot
+                    // create duplicate Socket.IO clients.
+                    awaitCancellation()
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    cleanupSocketConnection()
+
+                    val detail =
+                        exception.message
+                            ?.takeIf(String::isNotBlank)
+                            ?: exception.javaClass.simpleName
+
+                    GatewayServiceState.setConnection(
+                        GatewayConnectionPhase.RECONNECTING,
+                        "Sin conexión · reintento en " +
+                            "${retryDelayMs / 1_000}s · ${detail}"
                     )
 
-                val registeredSettings =
-                    registrationRepository.ensureRegistered(settings)
+                    Log.w(
+                        TAG,
+                        "Gateway bootstrap failed; retrying in " +
+                            "${retryDelayMs}ms",
+                        exception
+                    )
 
-                reconcilePendingJobs(application)
+                    delay(retryDelayMs)
+                    retryDelayMs =
+                        (retryDelayMs * 2)
+                            .coerceAtMost(MAX_RETRY_DELAY_MS)
+                }
+            }
+        }
+    }
 
+    private suspend fun bootstrapConnection(
+        application: SmsGatewayApplication
+    ) {
+        GatewayServiceState.setConnection(
+            GatewayConnectionPhase.REGISTERING,
+            "Validando identidad del gateway…"
+        )
+
+        val settings =
+            application.gatewaySettingsStore.settings.first()
+
+        val registrationRepository =
+            GatewayRegistrationRepository(
+                context = applicationContext,
+                settingsStore =
+                    application.gatewaySettingsStore
+            )
+
+        val registeredSettings =
+            registrationRepository.ensureRegistered(settings)
+
+        reconcilePendingJobs(application)
+
+        GatewayServiceState.setConnection(
+            GatewayConnectionPhase.CONNECTING,
+            "Conectando con Socket.IO…"
+        )
+
+        val client = GatewaySocketClient(
+            settings = registeredSettings,
+            onConnected = {
                 GatewayServiceState.setConnection(
                     GatewayConnectionPhase.CONNECTING,
-                    "Conectando con Socket.IO…"
+                    "Socket conectado · esperando backend"
                 )
-
-                val client = GatewaySocketClient(
-                    settings = registeredSettings,
-                    onConnected = {
-                        GatewayServiceState.setConnection(
-                            GatewayConnectionPhase.CONNECTING,
-                            "Socket conectado · esperando backend"
-                        )
-                    },
-                    onDisconnected = { reason ->
-                        GatewayServiceState.setConnection(
-                            GatewayConnectionPhase.RECONNECTING,
-                            "Desconectado · reconectando (${reason})"
-                        )
-                    },
-                    onServerReady = { version ->
-                        GatewayServiceState.setConnection(
-                            GatewayConnectionPhase.CONNECTED,
-                            "Online · backend ${version}",
-                            backendVersion = version
-                        )
-                    },
-                    onSmsAvailable = { jobId ->
-                        serviceScope.launch {
-                            processRemoteJob(jobId)
-                        }
-                    },
-                    onError = { error ->
-                        GatewayServiceState.setConnection(
-                            GatewayConnectionPhase.ERROR,
-                            "Error Socket.IO: ${error}"
-                        )
-                    }
-                )
-
-                socketClient = client
-                client.connect()
-
-                heartbeatJob?.cancel()
-                heartbeatJob = launch {
-                    while (isActive) {
-                        delay(15_000)
-                        client.heartbeat(
-                            BuildConfig.VERSION_NAME
-                        ) {
-                            GatewayServiceState.markHeartbeat()
-                        }
-                    }
-                }
-            } catch (exception: Exception) {
+            },
+            onDisconnected = { reason ->
                 GatewayServiceState.setConnection(
-                    GatewayConnectionPhase.ERROR,
-                    exception.message
-                        ?: "No se pudo iniciar el gateway"
+                    GatewayConnectionPhase.RECONNECTING,
+                    "Desconectado · reconectando (${reason})"
                 )
+            },
+            onServerReady = { version ->
+                GatewayServiceState.setConnection(
+                    GatewayConnectionPhase.CONNECTED,
+                    "Online · backend ${version}",
+                    backendVersion = version
+                )
+            },
+            onSmsAvailable = { jobId ->
+                serviceScope.launch {
+                    processRemoteJob(jobId)
+                }
+            },
+            onError = { error ->
+                GatewayServiceState.setConnection(
+                    GatewayConnectionPhase.RECONNECTING,
+                    "Socket.IO · reconectando: ${error}"
+                )
+            }
+        )
+
+        socketClient = client
+        client.connect()
+
+        heartbeatJob?.cancel()
+        heartbeatJob = serviceScope.launch {
+            while (isActive) {
+                delay(15_000)
+                client.heartbeat(
+                    BuildConfig.VERSION_NAME
+                ) {
+                    GatewayServiceState.markHeartbeat()
+                }
             }
         }
     }
@@ -391,11 +429,14 @@ class GatewayForegroundService : Service() {
     }
 
     private fun cleanupConnection() {
-        heartbeatJob?.cancel()
-        heartbeatJob = null
-
         connectionJob?.cancel()
         connectionJob = null
+        cleanupSocketConnection()
+    }
+
+    private fun cleanupSocketConnection() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
 
         socketClient?.disconnect()
         socketClient = null
@@ -470,6 +511,8 @@ class GatewayForegroundService : Service() {
         private const val CHANNEL_ID =
             "sms_gateway_service"
         private const val NOTIFICATION_ID = 1001
+        private const val INITIAL_RETRY_DELAY_MS = 1_000L
+        private const val MAX_RETRY_DELAY_MS = 30_000L
         private const val ACTION_START =
             "com.smsgateway.app.gateway.START"
         private const val ACTION_STOP =
