@@ -11,6 +11,9 @@ interface SmsJobDao {
     @Query("SELECT * FROM sms_jobs ORDER BY createdAt DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<SmsJobEntity>>
 
+    @Query("SELECT * FROM sms_jobs WHERE id = :jobId LIMIT 1")
+    suspend fun get(jobId: String): SmsJobEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insert(entity: SmsJobEntity): Long
 
@@ -33,7 +36,7 @@ interface SmsJobDao {
             sentAt = :sentAt,
             error = NULL
         WHERE id = :jobId
-          AND status = 'SENDING'
+          AND status IN ('SENDING', 'RECONCILIATION_REQUIRED')
         """
     )
     suspend fun markSent(jobId: String, sentAt: Long): Int
@@ -45,7 +48,7 @@ interface SmsJobDao {
             deliveredAt = :deliveredAt,
             error = NULL
         WHERE id = :jobId
-          AND status IN ('SENDING', 'SENT')
+          AND status IN ('SENDING', 'SENT', 'RECONCILIATION_REQUIRED')
         """
     )
     suspend fun markDelivered(jobId: String, deliveredAt: Long): Int
@@ -56,8 +59,27 @@ interface SmsJobDao {
         SET status = 'FAILED',
             error = :reason
         WHERE id = :jobId
-          AND status IN ('QUEUED', 'SENDING', 'RETRY_PENDING')
+          AND status IN (
+            'QUEUED',
+            'SENDING',
+            'RETRY_PENDING',
+            'RECONCILIATION_REQUIRED'
+          )
         """
     )
     suspend fun markFailed(jobId: String, reason: String): Int
+
+    @Query(
+        """
+        UPDATE sms_jobs
+        SET status = 'RECONCILIATION_REQUIRED',
+            error = :reason
+        WHERE id = :jobId
+          AND status = 'SENDING'
+        """
+    )
+    suspend fun markReconciliationRequired(
+        jobId: String,
+        reason: String
+    ): Int
 }

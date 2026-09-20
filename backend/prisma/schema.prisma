@@ -13,6 +13,7 @@ enum SmsMessageStatus {
   SENT
   DELIVERED
   FAILED
+  AMBIGUOUS
 }
 
 model Gateway {

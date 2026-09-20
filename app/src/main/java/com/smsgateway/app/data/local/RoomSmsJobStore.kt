@@ -13,12 +13,14 @@ class RoomSmsJobStore(
             entities.map(SmsJobEntity::toDomain)
         }
 
+    override suspend fun get(jobId: String): SmsJob? =
+        dao.get(jobId)?.toDomain()
+
     override suspend fun insertIfAbsent(job: SmsJob): Boolean =
         dao.insert(job.toEntity()) != -1L
 
-    override suspend fun markSending(jobId: String) {
-        dao.markSending(jobId)
-    }
+    override suspend fun markSending(jobId: String): Boolean =
+        dao.markSending(jobId) > 0
 
     override suspend fun markSent(jobId: String, sentAt: Long) {
         dao.markSent(jobId, sentAt)
@@ -31,4 +33,10 @@ class RoomSmsJobStore(
     override suspend fun markFailed(jobId: String, reason: String) {
         dao.markFailed(jobId, reason)
     }
+
+    override suspend fun markReconciliationRequired(
+        jobId: String,
+        reason: String
+    ): Boolean =
+        dao.markReconciliationRequired(jobId, reason) > 0
 }

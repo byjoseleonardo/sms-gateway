@@ -160,3 +160,45 @@ test("late SENT cannot downgrade DELIVERED", async () => {
   assert.ok(finalState?.sentAt);
   assert.ok(finalState?.deliveredAt);
 });
+
+
+test("ambiguous job can be resolved by a later SENT callback", async () => {
+  const queued = await registry.enqueue({
+    idempotencyKey: `${keyPrefix}0005`,
+    gatewayId,
+    destination: "+51987654321",
+    message: "hola"
+  });
+
+  await registry.claim(
+    queued.message.id,
+    gatewayId
+  );
+
+  await registry.updateStatus(
+    queued.message.id,
+    gatewayId,
+    "AMBIGUOUS",
+    "process restarted before callback"
+  );
+
+  const ambiguous = await registry.get(
+    queued.message.id
+  );
+
+  assert.equal(ambiguous?.status, "AMBIGUOUS");
+
+  await registry.updateStatus(
+    queued.message.id,
+    gatewayId,
+    "SENT"
+  );
+
+  const resolved = await registry.get(
+    queued.message.id
+  );
+
+  assert.equal(resolved?.status, "SENT");
+  assert.ok(resolved?.sentAt);
+  assert.equal(resolved?.lastError, null);
+});

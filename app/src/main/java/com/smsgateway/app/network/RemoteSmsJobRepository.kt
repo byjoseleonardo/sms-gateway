@@ -15,12 +15,33 @@ data class RemoteSmsJob(
 enum class RemoteSmsStatus {
     SENT,
     DELIVERED,
-    FAILED
+    FAILED,
+    AMBIGUOUS
 }
 
 class RemoteSmsJobRepository(
     private val settingsStore: GatewaySettingsStore
 ) {
+    suspend fun available(): List<AvailableRemoteSmsJob> {
+        val settings = settingsStore.settings.first()
+        val token = requireNotNull(settings.authToken) {
+            "El gateway no tiene token de autenticación"
+        }
+
+        val response = GatewayApiFactory
+            .create(settings.serverUrl)
+            .availableJobs(
+                gatewayId = settings.gatewayId,
+                authorization = "Bearer $token"
+            )
+
+        if (!response.isSuccessful) {
+            throw HttpException(response)
+        }
+
+        return response.body()?.jobs.orEmpty()
+    }
+
     suspend fun claim(jobId: String): RemoteSmsJob {
         val settings = settingsStore.settings.first()
         val token = requireNotNull(settings.authToken) {

@@ -22,19 +22,44 @@ class SendSmsUseCase(
             return SmsDispatchResult.Duplicate(job.id)
         }
 
+        return dispatch(job)
+    }
+
+    suspend fun resume(job: SmsJob): SmsDispatchResult {
+        if (
+            job.status != SmsJobStatus.QUEUED &&
+            job.status != SmsJobStatus.RETRY_PENDING
+        ) {
+            return SmsDispatchResult.Duplicate(job.id)
+        }
+
+        return dispatch(job)
+    }
+
+    private suspend fun dispatch(job: SmsJob): SmsDispatchResult {
         return try {
-            store.markSending(job.id)
+            if (!store.markSending(job.id)) {
+                return SmsDispatchResult.Duplicate(job.id)
+            }
+
             transport.send(
                 job.copy(
                     status = SmsJobStatus.SENDING,
-                    attempts = 1
+                    attempts = job.attempts + 1
                 )
             )
+
             SmsDispatchResult.Accepted(job.id)
         } catch (exception: Exception) {
-            val reason = exception.message ?: "No se pudo iniciar el envío"
+            val reason =
+                exception.message ?: "No se pudo iniciar el envío"
+
             store.markFailed(job.id, reason)
-            SmsDispatchResult.Failed(job.id, reason)
+
+            SmsDispatchResult.Failed(
+                job.id,
+                reason
+            )
         }
     }
 }

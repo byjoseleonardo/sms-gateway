@@ -127,7 +127,7 @@ fun SmsGatewayScreen(
 
             item {
                 Text(
-                    text = "v0.6 · cola remota + claim",
+                    text = "v0.7 · PostgreSQL + reconciliación",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -503,6 +503,7 @@ private fun SmsJobStatus.displayName(): String = when (this) {
     SmsJobStatus.DELIVERED -> "Entregado"
     SmsJobStatus.FAILED -> "Fallido"
     SmsJobStatus.RETRY_PENDING -> "Reintento pendiente"
+    SmsJobStatus.RECONCILIATION_REQUIRED -> "Requiere reconciliación"
 }
 
 private val timestampFormatter: DateTimeFormatter =

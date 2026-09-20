@@ -8,7 +8,7 @@ import {
 import { gatewayAuth } from "./gateways/gatewayAuth.js";
 import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 
-export const APP_VERSION = "0.4.0";
+export const APP_VERSION = "0.7.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -30,7 +30,7 @@ const enqueueMessageSchema = z.object({
 });
 
 const updateMessageStatusSchema = z.object({
-  status: z.enum(["SENT", "DELIVERED", "FAILED"]),
+  status: z.enum(["SENT", "DELIVERED", "FAILED", "AMBIGUOUS"]),
   error: z.string().trim().max(500).optional()
 });
 

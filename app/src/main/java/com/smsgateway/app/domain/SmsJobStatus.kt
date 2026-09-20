@@ -6,5 +6,6 @@ enum class SmsJobStatus {
     SENT,
     DELIVERED,
     FAILED,
-    RETRY_PENDING
+    RETRY_PENDING,
+    RECONCILIATION_REQUIRED
 }

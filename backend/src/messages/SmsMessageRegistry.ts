@@ -6,7 +6,8 @@ export type SmsMessageStatus =
   | "CLAIMED"
   | "SENT"
   | "DELIVERED"
-  | "FAILED";
+  | "FAILED"
+  | "AMBIGUOUS";
 
 export type SmsMessageRecord = {
   id: string;
@@ -134,7 +135,7 @@ export class SmsMessageRegistry {
   async updateStatus(
     jobId: string,
     gatewayId: string,
-    status: "SENT" | "DELIVERED" | "FAILED",
+    status: "SENT" | "DELIVERED" | "FAILED" | "AMBIGUOUS",
     error?: string
   ) {
     const initial = await this.prisma.smsMessage.findUnique({
@@ -158,7 +159,9 @@ export class SmsMessageRegistry {
         where: {
           id: jobId,
           gatewayId,
-          status: "CLAIMED"
+          status: {
+            in: ["CLAIMED", "AMBIGUOUS"]
+          }
         },
         data: {
           status: "SENT",
@@ -186,7 +189,7 @@ export class SmsMessageRegistry {
           id: jobId,
           gatewayId,
           status: {
-            in: ["CLAIMED", "SENT"]
+            in: ["CLAIMED", "SENT", "AMBIGUOUS"]
           }
         },
         data: {
@@ -202,11 +205,29 @@ export class SmsMessageRegistry {
         where: {
           id: jobId,
           gatewayId,
-          status: "CLAIMED"
+          status: {
+            in: ["CLAIMED", "AMBIGUOUS"]
+          }
         },
         data: {
           status: "FAILED",
           lastError: error?.trim() || "unknown_error"
+        }
+      });
+    }
+
+    if (status === "AMBIGUOUS") {
+      await this.prisma.smsMessage.updateMany({
+        where: {
+          id: jobId,
+          gatewayId,
+          status: "CLAIMED"
+        },
+        data: {
+          status: "AMBIGUOUS",
+          lastError:
+            error?.trim() ||
+            "delivery_outcome_unknown_after_process_restart"
         }
       });
     }
