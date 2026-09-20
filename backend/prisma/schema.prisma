@@ -46,8 +46,10 @@ model SmsMessage {
   claimedAt      DateTime?        @map("claimed_at")
   sentAt         DateTime?        @map("sent_at")
   deliveredAt    DateTime?        @map("delivered_at")
-  lastError      String?          @map("last_error") @db.VarChar(500)
-  gateway        Gateway          @relation(fields: [gatewayId], references: [gatewayId], onDelete: Restrict)
+  lastError              String?          @map("last_error") @db.VarChar(500)
+  operatorResolvedAt     DateTime?        @map("operator_resolved_at")
+  operatorResolutionNote String?          @map("operator_resolution_note") @db.VarChar(500)
+  gateway                Gateway          @relation(fields: [gatewayId], references: [gatewayId], onDelete: Restrict)
 
   @@index([gatewayId, status, createdAt])
   @@map("sms_messages")

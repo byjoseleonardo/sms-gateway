@@ -23,6 +23,8 @@ export type SmsMessageRecord = {
   sentAt: string | null;
   deliveredAt: string | null;
   lastError: string | null;
+  operatorResolvedAt: string | null;
+  operatorResolutionNote: string | null;
 };
 
 export class SmsMessageRegistry {
@@ -248,6 +250,87 @@ export class SmsMessageRegistry {
     };
   }
 
+  async resolveAmbiguous(
+    jobId: string,
+    resolution: "SENT" | "DELIVERED" | "FAILED",
+    note: string
+  ) {
+    const existing = await this.prisma.smsMessage.findUnique({
+      where: {
+        id: jobId
+      }
+    });
+
+    if (!existing) {
+      return { kind: "not_found" as const };
+    }
+
+    if (existing.status !== "AMBIGUOUS") {
+      return {
+        kind: "invalid_state" as const,
+        message: toRecord(existing)
+      };
+    }
+
+    const now = new Date();
+    const normalizedNote = note.trim();
+
+    const updated = await this.prisma.smsMessage.updateMany({
+      where: {
+        id: jobId,
+        status: "AMBIGUOUS"
+      },
+      data: {
+        status: resolution,
+        operatorResolvedAt: now,
+        operatorResolutionNote: normalizedNote,
+        ...(resolution === "SENT"
+          ? {
+              sentAt: existing.sentAt ?? now,
+              lastError: null
+            }
+          : {}),
+        ...(resolution === "DELIVERED"
+          ? {
+              sentAt: existing.sentAt ?? now,
+              deliveredAt: existing.deliveredAt ?? now,
+              lastError: null
+            }
+          : {}),
+        ...(resolution === "FAILED"
+          ? {
+              lastError:
+                normalizedNote || "Marcado FAILED por operador"
+            }
+          : {})
+      }
+    });
+
+    if (updated.count !== 1) {
+      const raced = await this.prisma.smsMessage.findUnique({
+        where: {
+          id: jobId
+        }
+      });
+
+      return {
+        kind: "invalid_state" as const,
+        message: raced ? toRecord(raced) : null
+      };
+    }
+
+    const message = await this.prisma.smsMessage.findUnique({
+      where: {
+        id: jobId
+      }
+    });
+
+    return {
+      kind: "resolved" as const,
+      message: message ? toRecord(message) : null
+    };
+  }
+
   async get(jobId: string) {
     const message = await this.prisma.smsMessage.findUnique({
       where: {
@@ -331,6 +414,8 @@ function toRecord(message: {
   sentAt: Date | null;
   deliveredAt: Date | null;
   lastError: string | null;
+  operatorResolvedAt: Date | null;
+  operatorResolutionNote: string | null;
 }): SmsMessageRecord {
   return {
     id: message.id,
@@ -345,6 +430,10 @@ function toRecord(message: {
     claimedAt: message.claimedAt?.toISOString() ?? null,
     sentAt: message.sentAt?.toISOString() ?? null,
     deliveredAt: message.deliveredAt?.toISOString() ?? null,
-    lastError: message.lastError
+    lastError: message.lastError,
+    operatorResolvedAt:
+      message.operatorResolvedAt?.toISOString() ?? null,
+    operatorResolutionNote:
+      message.operatorResolutionNote
   };
 }

@@ -14,12 +14,14 @@ Backend de control para el gateway Android.
 
 ## Stack Docker local
 
-Define primero la clave de operador en la terminal:
+Copia `.env.example` a `.env` y define claves aleatorias de al menos 32 caracteres:
 
-```powershell
-$env:OPERATOR_API_KEY = "<clave-larga-y-aleatoria>"
-$env:GATEWAY_ENROLLMENT_KEY = "<otra-clave-larga-y-aleatoria>"
+```env
+OPERATOR_API_KEY=<clave-larga-y-aleatoria>
+GATEWAY_ENROLLMENT_KEY=<otra-clave-larga-y-aleatoria>
 ```
+
+`.env` es local y está ignorado por Git. En el entorno de desarrollo actual se preservan allí las credenciales del contenedor para que los reinicios de Docker/Windows no obliguen a rotarlas.
 
 Levanta PostgreSQL, ejecuta migraciones y arranca el backend:
 
@@ -131,7 +133,7 @@ x-gateway-enrollment-key: <GATEWAY_ENROLLMENT_KEY>
 - `POST /api/v1/gateways/heartbeat`
 - `GET /api/v1/gateways/:gatewayId/status`
 
-### Mensajes
+### Operador y mensajes
 
 Requieren:
 
@@ -139,11 +141,37 @@ Requieren:
 Authorization: Bearer <OPERATOR_API_KEY>
 ```
 
+- `GET /api/v1/gateways`
+- `GET /api/v1/messages`
 - `POST /api/v1/messages`
 - `GET /api/v1/messages/:jobId`
+- `POST /api/v1/messages/:jobId/resolve`
+
+La resolución manual solo acepta jobs `AMBIGUOUS` y permite registrar `SENT`, `DELIVERED` o `FAILED`. Guarda `operatorResolvedAt` y `operatorResolutionNote` y nunca reencola el SMS.
+
+Los endpoints usados por Android son:
+
 - `GET /api/v1/gateway/jobs/available`
 - `POST /api/v1/gateway/jobs/:jobId/claim`
 - `POST /api/v1/gateway/jobs/:jobId/status`
+
+### Panel de operador
+
+El backend sirve una interfaz same-origin en:
+
+```text
+http://127.0.0.1:3000/operator
+```
+
+La API key se introduce en el navegador y se mantiene únicamente en `sessionStorage` de esa pestaña. El panel permite:
+
+- ver gateways online/offline;
+- consultar y filtrar mensajes;
+- crear jobs SMS con idempotency key única;
+- refresco automático cada 5 segundos;
+- resolver estados `AMBIGUOUS` con confirmación y nota de auditoría.
+
+No contiene claves embebidas ni dependencias web externas.
 
 ### Socket.IO
 
@@ -178,7 +206,8 @@ npm test
 ```
 
 Los tests de `SmsMessageRegistry` se ejecutan contra PostgreSQL real y verifican
-las reglas críticas de concurrencia/idempotencia.
+las reglas críticas de concurrencia/idempotencia, reparación por heartbeat y
+resolución manual de estados ambiguos.
 
 ## Seguridad
 
@@ -192,5 +221,7 @@ las reglas críticas de concurrencia/idempotencia.
 ## Estado validado
 
 El gateway `GW-A03-001` se reconecta al backend Prisma usando la credencial
-preexistente y mantiene heartbeat. El job E2E migrado conserva el estado
-`DELIVERED`, sus timestamps y `attempts = 1`.
+preexistente y mantiene heartbeat. Los E2E remotos conservan `DELIVERED`,
+timestamps e idempotencia en PostgreSQL. También se validó recuperación de un
+job `QUEUED` cuyo evento realtime inicial se perdió y resolución manual de un
+`AMBIGUOUS` sintético sin retransmisión.

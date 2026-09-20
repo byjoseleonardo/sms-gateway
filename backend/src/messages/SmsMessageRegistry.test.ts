@@ -241,3 +241,68 @@ test("heartbeat repair only reannounces QUEUED jobs", async () => {
     false
   );
 });
+
+
+test("operator can resolve AMBIGUOUS without creating a retry", async () => {
+  const queued = await registry.enqueue({
+    idempotencyKey: `${keyPrefix}0008`,
+    gatewayId,
+    destination: "+51987654321",
+    message: "hola"
+  });
+
+  await registry.claim(
+    queued.message.id,
+    gatewayId
+  );
+
+  await registry.updateStatus(
+    queued.message.id,
+    gatewayId,
+    "AMBIGUOUS",
+    "callback outcome unknown"
+  );
+
+  const result = await registry.resolveAmbiguous(
+    queued.message.id,
+    "DELIVERED",
+    "confirmed manually"
+  );
+
+  assert.equal(result.kind, "resolved");
+
+  if (result.kind === "resolved") {
+    assert.equal(result.message?.status, "DELIVERED");
+    assert.equal(result.message?.attempts, 1);
+    assert.equal(
+      result.message?.operatorResolutionNote,
+      "confirmed manually"
+    );
+    assert.ok(result.message?.operatorResolvedAt);
+    assert.ok(result.message?.deliveredAt);
+  }
+});
+
+test("operator resolution rejects non ambiguous jobs", async () => {
+  const queued = await registry.enqueue({
+    idempotencyKey: `${keyPrefix}0009`,
+    gatewayId,
+    destination: "+51987654321",
+    message: "hola"
+  });
+
+  const result = await registry.resolveAmbiguous(
+    queued.message.id,
+    "FAILED",
+    "should not be allowed"
+  );
+
+  assert.equal(result.kind, "invalid_state");
+
+  const persisted = await registry.get(
+    queued.message.id
+  );
+
+  assert.equal(persisted?.status, "QUEUED");
+  assert.equal(persisted?.attempts, 0);
+});

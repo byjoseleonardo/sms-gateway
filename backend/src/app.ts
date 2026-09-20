@@ -6,10 +6,11 @@ import {
 } from "./gateways/GatewayRegistry.js";
 import { gatewayAuth } from "./gateways/gatewayAuth.js";
 import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
+import { operatorPageHtml } from "./operator/operatorPage.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.12.0";
+export const APP_VERSION = "0.13.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -48,6 +49,11 @@ const listMessagesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50)
 });
 
+const resolveAmbiguousSchema = z.object({
+  status: z.enum(["SENT", "DELIVERED", "FAILED"]),
+  note: z.string().trim().min(3).max(500)
+});
+
 export function createApp(
   gatewayRegistry: GatewayRegistry,
   messageRegistry: SmsMessageRegistry,
@@ -62,6 +68,13 @@ export function createApp(
 
   const operatorAuth = operatorApiKeyAuth(operatorApiKey);
   const enrollmentAuth = gatewayEnrollmentAuth(gatewayEnrollmentKey);
+
+  app.get("/operator", (_req, res) => {
+    res
+      .status(200)
+      .type("html")
+      .send(operatorPageHtml(APP_VERSION));
+  });
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -236,6 +249,48 @@ export function createApp(
 
     res.json(message);
   });
+
+  app.post(
+    "/api/v1/messages/:jobId/resolve",
+    operatorAuth,
+    async (req, res) => {
+      const parsed = resolveAmbiguousSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_resolution_payload",
+          details: parsed.error.flatten()
+        });
+        return;
+      }
+
+      const result = await messageRegistry.resolveAmbiguous(
+        req.params.jobId as string,
+        parsed.data.status,
+        parsed.data.note
+      );
+
+      if (result.kind === "not_found") {
+        res.status(404).json({
+          error: "message_not_found"
+        });
+        return;
+      }
+
+      if (result.kind === "invalid_state") {
+        res.status(409).json({
+          error: "message_not_ambiguous",
+          message: result.message
+        });
+        return;
+      }
+
+      res.json({
+        status: "ok",
+        message: result.message
+      });
+    }
+  );
 
   app.get(
     "/api/v1/gateway/jobs/available",
