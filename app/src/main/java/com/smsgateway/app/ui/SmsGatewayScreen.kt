@@ -40,6 +40,7 @@ import com.smsgateway.app.domain.SmsDispatchResult
 import com.smsgateway.app.domain.SmsJob
 import com.smsgateway.app.domain.SmsJobRequest
 import com.smsgateway.app.domain.SmsJobStatus
+import com.smsgateway.app.gateway.GatewayConnectionSnapshot
 import com.smsgateway.app.gateway.GatewayForegroundService
 import com.smsgateway.app.gateway.GatewayServiceState
 import com.smsgateway.app.network.BackendHealthResult
@@ -63,6 +64,7 @@ fun SmsGatewayScreen(
     val recentJobs by jobs.collectAsState(initial = emptyList())
     val storedSettings by gatewaySettings.collectAsState(initial = GatewaySettings())
     val gatewayRunning by GatewayServiceState.running.collectAsState()
+    val gatewayConnection by GatewayServiceState.connection.collectAsState()
     val scope = rememberCoroutineScope()
 
     var serverUrl by remember { mutableStateOf(storedSettings.serverUrl) }
@@ -125,7 +127,7 @@ fun SmsGatewayScreen(
 
             item {
                 Text(
-                    text = "v0.4 · conexión local con backend",
+                    text = "v0.5 · autenticación + Socket.IO",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -194,6 +196,7 @@ fun SmsGatewayScreen(
             item {
                 GatewayServiceCard(
                     running = gatewayRunning,
+                    connection = gatewayConnection,
                     onStart = {
                         validationError = null
                         val needsNotificationPermission =
@@ -388,6 +391,7 @@ private fun BackendConnectionCard(
 @Composable
 private fun GatewayServiceCard(
     running: Boolean,
+    connection: GatewayConnectionSnapshot,
     onStart: () -> Unit,
     onStop: () -> Unit
 ) {
@@ -402,12 +406,19 @@ private fun GatewayServiceCard(
             )
             Text(
                 text = if (running) {
-                    "Activo · listo para mantener la conexión en tiempo real"
+                    connection.message
                 } else {
                     "Detenido"
                 },
                 style = MaterialTheme.typography.bodyMedium
             )
+
+            if (running && connection.backendVersion != null) {
+                Text(
+                    text = "Backend ${connection.backendVersion}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             Button(
                 onClick = if (running) onStop else onStart,
                 modifier = Modifier.fillMaxWidth()

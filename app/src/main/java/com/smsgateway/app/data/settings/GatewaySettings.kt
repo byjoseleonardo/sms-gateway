@@ -2,7 +2,8 @@ package com.smsgateway.app.data.settings
 
 data class GatewaySettings(
     val serverUrl: String = DEFAULT_SERVER_URL,
-    val gatewayId: String = DEFAULT_GATEWAY_ID
+    val gatewayId: String = DEFAULT_GATEWAY_ID,
+    val authToken: String? = null
 ) {
     companion object {
         const val DEFAULT_SERVER_URL = "http://127.0.0.1:3000/"

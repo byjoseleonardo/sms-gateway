@@ -20,7 +20,8 @@ class GatewaySettingsStore(
                 serverUrl = preferences[SERVER_URL]
                     ?: GatewaySettings.DEFAULT_SERVER_URL,
                 gatewayId = preferences[GATEWAY_ID]
-                    ?: GatewaySettings.DEFAULT_GATEWAY_ID
+                    ?: GatewaySettings.DEFAULT_GATEWAY_ID,
+                authToken = preferences[AUTH_TOKEN]
             )
         }
 
@@ -32,13 +33,41 @@ class GatewaySettingsStore(
         }
 
         context.gatewaySettingsDataStore.edit { preferences ->
+            val serverChanged =
+                preferences[SERVER_URL] != null &&
+                preferences[SERVER_URL] != normalizedUrl
+            val gatewayChanged =
+                preferences[GATEWAY_ID] != null &&
+                preferences[GATEWAY_ID] != normalizedGatewayId
+
             preferences[SERVER_URL] = normalizedUrl
             preferences[GATEWAY_ID] = normalizedGatewayId
+
+            if (serverChanged || gatewayChanged) {
+                preferences.remove(AUTH_TOKEN)
+            }
+        }
+    }
+
+    suspend fun saveToken(token: String) {
+        require(token.isNotBlank()) {
+            "El token del gateway no puede estar vacío"
+        }
+
+        context.gatewaySettingsDataStore.edit { preferences ->
+            preferences[AUTH_TOKEN] = token
+        }
+    }
+
+    suspend fun clearToken() {
+        context.gatewaySettingsDataStore.edit { preferences ->
+            preferences.remove(AUTH_TOKEN)
         }
     }
 
     private companion object {
         val SERVER_URL = stringPreferencesKey("server_url")
         val GATEWAY_ID = stringPreferencesKey("gateway_id")
+        val AUTH_TOKEN = stringPreferencesKey("auth_token")
     }
 }
