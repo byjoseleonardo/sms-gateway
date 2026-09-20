@@ -29,6 +29,15 @@ data class GatewayStatusResponse(
     val appVersion: String
 )
 
+data class RemoteSmsStatusRequest(
+    val status: String,
+    val error: String? = null
+)
+
+data class RemoteSmsStatusResponse(
+    val status: String
+)
+
 interface GatewayApi {
     @GET("health")
     suspend fun health(): HealthResponse
@@ -51,6 +60,21 @@ interface GatewayApi {
         @Header("x-gateway-id") authenticatedGatewayId: String,
         @Header("Authorization") authorization: String
     ): Response<GatewayStatusResponse>
+
+    @POST("api/v1/gateway/jobs/{jobId}/claim")
+    suspend fun claimJob(
+        @Path("jobId") jobId: String,
+        @Header("x-gateway-id") gatewayId: String,
+        @Header("Authorization") authorization: String
+    ): Response<RemoteSmsJob>
+
+    @POST("api/v1/gateway/jobs/{jobId}/status")
+    suspend fun updateJobStatus(
+        @Path("jobId") jobId: String,
+        @Header("x-gateway-id") gatewayId: String,
+        @Header("Authorization") authorization: String,
+        @Body body: RemoteSmsStatusRequest
+    ): Response<RemoteSmsStatusResponse>
 }
 
 object GatewayApiFactory {

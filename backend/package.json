@@ -1,13 +1,14 @@
 {
   "name": "sms-gateway-backend",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/messages/SmsMessageRegistry.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

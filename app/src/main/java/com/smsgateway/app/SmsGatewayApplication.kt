@@ -7,6 +7,7 @@ import com.smsgateway.app.data.settings.GatewaySettingsStore
 import com.smsgateway.app.domain.SendSmsUseCase
 import com.smsgateway.app.domain.SmsJobStore
 import com.smsgateway.app.network.BackendHealthRepository
+import com.smsgateway.app.network.RemoteSmsJobRepository
 import com.smsgateway.app.sms.AndroidSmsTransport
 
 class SmsGatewayApplication : Application() {
@@ -20,6 +21,9 @@ class SmsGatewayApplication : Application() {
         private set
 
     lateinit var backendHealthRepository: BackendHealthRepository
+        private set
+
+    lateinit var remoteSmsJobRepository: RemoteSmsJobRepository
         private set
 
     override fun onCreate() {
@@ -36,5 +40,7 @@ class SmsGatewayApplication : Application() {
 
         gatewaySettingsStore = GatewaySettingsStore(this)
         backendHealthRepository = BackendHealthRepository()
+        remoteSmsJobRepository =
+            RemoteSmsJobRepository(gatewaySettingsStore)
     }
 }

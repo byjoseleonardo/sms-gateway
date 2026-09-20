@@ -127,7 +127,7 @@ fun SmsGatewayScreen(
 
             item {
                 Text(
-                    text = "v0.5 · autenticación + Socket.IO",
+                    text = "v0.6 · cola remota + claim",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }

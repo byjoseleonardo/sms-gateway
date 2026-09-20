@@ -3,6 +3,7 @@ import { Server as SocketIoServer } from "socket.io";
 import { z } from "zod";
 import { APP_VERSION, createApp } from "./app.js";
 import { GatewayRegistry } from "./gateways/GatewayRegistry.js";
+import { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -10,11 +11,25 @@ const envSchema = z.object({
 });
 
 const env = envSchema.parse(process.env);
-const registry = new GatewayRegistry();
-const app = createApp(registry);
+const gatewayRegistry = new GatewayRegistry();
+const messageRegistry = new SmsMessageRegistry();
+
+let io: SocketIoServer;
+
+const app = createApp(
+  gatewayRegistry,
+  messageRegistry,
+  (gatewayId, jobId) => {
+    io.to(`gateway:${gatewayId}`).emit(
+      "sms.available",
+      { jobId }
+    );
+  }
+);
+
 const httpServer = createServer(app);
 
-const io = new SocketIoServer(httpServer, {
+io = new SocketIoServer(httpServer, {
   cors: {
     origin: false
   }
@@ -37,7 +52,7 @@ io.use(async (socket, next) => {
       return;
     }
 
-    if (!(await registry.authenticate(gatewayId, token))) {
+    if (!(await gatewayRegistry.authenticate(gatewayId, token))) {
       next(new Error("invalid_gateway_credentials"));
       return;
     }
@@ -57,13 +72,22 @@ io.on("connection", async socket => {
   const gatewayId = socket.data.gatewayId as string;
 
   await socket.join(`gateway:${gatewayId}`);
-  await registry.touch(gatewayId);
+  await gatewayRegistry.touch(gatewayId);
 
   socket.emit("gateway.serverReady", {
     version: APP_VERSION,
     gatewayId,
     timestamp: new Date().toISOString()
   });
+
+  const pendingJobs =
+    await messageRegistry.getAvailableForGateway(gatewayId);
+
+  for (const job of pendingJobs) {
+    socket.emit("sms.available", {
+      jobId: job.id
+    });
+  }
 
   socket.on("gateway.heartbeat", async (payload, acknowledge) => {
     const appVersion =
@@ -72,7 +96,7 @@ io.on("connection", async socket => {
         ? payload.appVersion
         : undefined;
 
-    const gateway = await registry.touch(
+    const gateway = await gatewayRegistry.touch(
       gatewayId,
       appVersion
     );

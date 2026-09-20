@@ -9,13 +9,17 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.smsgateway.app.BuildConfig
 import com.smsgateway.app.MainActivity
 import com.smsgateway.app.SmsGatewayApplication
+import com.smsgateway.app.domain.SmsDispatchResult
+import com.smsgateway.app.domain.SmsJobRequest
 import com.smsgateway.app.network.GatewayRegistrationRepository
+import com.smsgateway.app.network.RemoteSmsStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 class GatewayForegroundService : Service() {
 
@@ -110,20 +115,25 @@ class GatewayForegroundService : Service() {
                     onDisconnected = { reason ->
                         GatewayServiceState.setConnection(
                             GatewayConnectionPhase.RECONNECTING,
-                            "Desconectado · reconectando ($reason)"
+                            "Desconectado · reconectando (${reason})"
                         )
                     },
                     onServerReady = { version ->
                         GatewayServiceState.setConnection(
                             GatewayConnectionPhase.CONNECTED,
-                            "Online · backend $version",
+                            "Online · backend ${version}",
                             backendVersion = version
                         )
+                    },
+                    onSmsAvailable = { jobId ->
+                        serviceScope.launch {
+                            processRemoteJob(jobId)
+                        }
                     },
                     onError = { error ->
                         GatewayServiceState.setConnection(
                             GatewayConnectionPhase.ERROR,
-                            "Error Socket.IO: $error"
+                            "Error Socket.IO: ${error}"
                         )
                     }
                 )
@@ -135,8 +145,11 @@ class GatewayForegroundService : Service() {
                 heartbeatJob = launch {
                     while (isActive) {
                         delay(15_000)
-                        client.heartbeat(BuildConfig.VERSION_NAME)
-                        GatewayServiceState.markHeartbeat()
+                        client.heartbeat(
+                            BuildConfig.VERSION_NAME
+                        ) {
+                            GatewayServiceState.markHeartbeat()
+                        }
                     }
                 }
             } catch (exception: Exception) {
@@ -146,6 +159,66 @@ class GatewayForegroundService : Service() {
                         ?: "No se pudo iniciar el gateway"
                 )
             }
+        }
+    }
+
+    private suspend fun processRemoteJob(jobId: String) {
+        val application =
+            application as SmsGatewayApplication
+
+        try {
+            val remoteJob =
+                application.remoteSmsJobRepository.claim(jobId)
+
+            when (
+                val dispatch =
+                    application.sendSmsUseCase.execute(
+                        SmsJobRequest(
+                            id = remoteJob.id,
+                            destination = remoteJob.destination,
+                            message = remoteJob.message
+                        )
+                    )
+            ) {
+                is SmsDispatchResult.Accepted -> {
+                    Log.i(
+                        TAG,
+                        "Remote SMS accepted: ${dispatch.jobId}"
+                    )
+                }
+
+                is SmsDispatchResult.Duplicate -> {
+                    Log.i(
+                        TAG,
+                        "Remote SMS already exists locally: ${dispatch.jobId}"
+                    )
+                }
+
+                is SmsDispatchResult.Failed -> {
+                    application.remoteSmsJobRepository.reportStatus(
+                        jobId = dispatch.jobId,
+                        status = RemoteSmsStatus.FAILED,
+                        error = dispatch.reason
+                    )
+                }
+            }
+        } catch (exception: HttpException) {
+            if (
+                exception.code() != 404 &&
+                exception.code() != 409
+            ) {
+                Log.e(
+                    TAG,
+                    "Remote SMS claim failed with HTTP ${exception.code()}",
+                    exception
+                )
+            }
+        } catch (exception: Exception) {
+            Log.e(
+                TAG,
+                "Remote SMS processing failed for ${jobId}",
+                exception
+            )
         }
     }
 
@@ -235,6 +308,7 @@ class GatewayForegroundService : Service() {
     }
 
     companion object {
+        private const val TAG = "GatewayService"
         private const val CHANNEL_ID =
             "sms_gateway_service"
         private const val NOTIFICATION_ID = 1001

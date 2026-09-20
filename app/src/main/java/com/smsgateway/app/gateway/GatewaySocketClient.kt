@@ -1,6 +1,7 @@
 package com.smsgateway.app.gateway
 
 import com.smsgateway.app.data.settings.GatewaySettings
+import io.socket.client.Ack
 import io.socket.client.IO
 import io.socket.client.Socket
 import java.net.URI
@@ -11,6 +12,7 @@ class GatewaySocketClient(
     private val onConnected: () -> Unit,
     private val onDisconnected: (String) -> Unit,
     private val onServerReady: (String) -> Unit,
+    private val onSmsAvailable: (String) -> Unit,
     private val onError: (String) -> Unit
 ) {
     private val socket: Socket
@@ -64,19 +66,34 @@ class GatewaySocketClient(
                 ?: "desconocida"
             onServerReady(version)
         }
+
+        socket.on("sms.available") { args ->
+            val payload = args.firstOrNull() as? JSONObject
+            val jobId = payload?.optString("jobId")
+                ?.takeIf(String::isNotBlank)
+                ?: return@on
+
+            onSmsAvailable(jobId)
+        }
     }
 
     fun connect() {
         socket.connect()
     }
 
-    fun heartbeat(appVersion: String) {
+    fun heartbeat(
+        appVersion: String,
+        onAcknowledged: () -> Unit
+    ) {
         if (!socket.connected()) return
 
         socket.emit(
             "gateway.heartbeat",
             JSONObject().apply {
                 put("appVersion", appVersion)
+            },
+            Ack {
+                onAcknowledged()
             }
         )
     }
