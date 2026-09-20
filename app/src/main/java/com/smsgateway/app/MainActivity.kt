@@ -16,7 +16,10 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 SmsGatewayScreen(
                     jobs = application.smsJobStore.observeRecent(),
-                    sendSms = application.sendSmsUseCase::execute
+                    gatewaySettings = application.gatewaySettingsStore.settings,
+                    sendSms = application.sendSmsUseCase::execute,
+                    saveGatewaySettings = application.gatewaySettingsStore::save,
+                    checkBackend = application.backendHealthRepository::check
                 )
             }
         }

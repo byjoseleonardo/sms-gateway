@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,12 +34,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.smsgateway.app.data.settings.GatewaySettings
+import com.smsgateway.app.data.settings.normalizeServerUrl
 import com.smsgateway.app.domain.SmsDispatchResult
 import com.smsgateway.app.domain.SmsJob
 import com.smsgateway.app.domain.SmsJobRequest
 import com.smsgateway.app.domain.SmsJobStatus
 import com.smsgateway.app.gateway.GatewayForegroundService
 import com.smsgateway.app.gateway.GatewayServiceState
+import com.smsgateway.app.network.BackendHealthResult
 import com.smsgateway.app.validation.SmsInputValidator
 import java.time.Instant
 import java.time.ZoneId
@@ -50,12 +54,22 @@ import kotlinx.coroutines.launch
 @Composable
 fun SmsGatewayScreen(
     jobs: Flow<List<SmsJob>>,
-    sendSms: suspend (SmsJobRequest) -> SmsDispatchResult
+    gatewaySettings: Flow<GatewaySettings>,
+    sendSms: suspend (SmsJobRequest) -> SmsDispatchResult,
+    saveGatewaySettings: suspend (String, String) -> Unit,
+    checkBackend: suspend (GatewaySettings) -> BackendHealthResult
 ) {
     val context = LocalContext.current
     val recentJobs by jobs.collectAsState(initial = emptyList())
+    val storedSettings by gatewaySettings.collectAsState(initial = GatewaySettings())
     val gatewayRunning by GatewayServiceState.running.collectAsState()
     val scope = rememberCoroutineScope()
+
+    var serverUrl by remember { mutableStateOf(storedSettings.serverUrl) }
+    var gatewayId by remember { mutableStateOf(storedSettings.gatewayId) }
+    var backendMessage by remember { mutableStateOf("Sin probar") }
+    var backendConnected by remember { mutableStateOf<Boolean?>(null) }
+    var isCheckingBackend by remember { mutableStateOf(false) }
 
     var phone by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
@@ -68,6 +82,11 @@ fun SmsGatewayScreen(
                 Manifest.permission.SEND_SMS
             ) == PackageManager.PERMISSION_GRANTED
         )
+    }
+
+    LaunchedEffect(storedSettings) {
+        serverUrl = storedSettings.serverUrl
+        gatewayId = storedSettings.gatewayId
     }
 
     val smsPermissionLauncher = rememberLauncherForActivityResult(
@@ -106,8 +125,69 @@ fun SmsGatewayScreen(
 
             item {
                 Text(
-                    text = "v0.3 · persistencia + servicio de gateway",
+                    text = "v0.4 · conexión local con backend",
                     style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
+            item {
+                BackendConnectionCard(
+                    serverUrl = serverUrl,
+                    gatewayId = gatewayId,
+                    statusMessage = backendMessage,
+                    connected = backendConnected,
+                    checking = isCheckingBackend,
+                    onServerUrlChange = {
+                        serverUrl = it
+                        backendConnected = null
+                        backendMessage = "Cambios sin probar"
+                    },
+                    onGatewayIdChange = {
+                        gatewayId = it
+                        backendConnected = null
+                        backendMessage = "Cambios sin probar"
+                    },
+                    onSaveAndCheck = {
+                        if (!isCheckingBackend) {
+                            scope.launch {
+                                isCheckingBackend = true
+                                backendConnected = null
+                                backendMessage = "Probando conexión…"
+
+                                try {
+                                    val normalizedSettings = GatewaySettings(
+                                        serverUrl = normalizeServerUrl(serverUrl),
+                                        gatewayId = gatewayId.trim()
+                                    )
+                                    require(normalizedSettings.gatewayId.isNotBlank()) {
+                                        "El identificador del gateway no puede estar vacío"
+                                    }
+
+                                    saveGatewaySettings(
+                                        normalizedSettings.serverUrl,
+                                        normalizedSettings.gatewayId
+                                    )
+
+                                    serverUrl = normalizedSettings.serverUrl
+                                    gatewayId = normalizedSettings.gatewayId
+
+                                    val result = checkBackend(normalizedSettings)
+                                    backendConnected = result.connected
+                                    backendMessage = if (result.latencyMs != null) {
+                                        "${result.message} · ${result.latencyMs} ms"
+                                    } else {
+                                        result.message
+                                    }
+                                } catch (exception: Exception) {
+                                    backendConnected = false
+                                    backendMessage = exception.message
+                                        ?: "No se pudo guardar o probar la conexión"
+                                } finally {
+                                    isCheckingBackend = false
+                                }
+                            }
+                        }
+                    }
                 )
             }
 
@@ -205,7 +285,8 @@ fun SmsGatewayScreen(
                                     when (val result = sendSms(request)) {
                                         is SmsDispatchResult.Accepted -> Unit
                                         is SmsDispatchResult.Duplicate ->
-                                            validationError = "El trabajo ${result.jobId.take(8)} ya fue procesado"
+                                            validationError =
+                                                "El trabajo ${result.jobId.take(8)} ya fue procesado"
                                         is SmsDispatchResult.Failed ->
                                             validationError = result.reason
                                     }
@@ -241,6 +322,64 @@ fun SmsGatewayScreen(
                 ) { job ->
                     SmsHistoryCard(job)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackendConnectionCard(
+    serverUrl: String,
+    gatewayId: String,
+    statusMessage: String,
+    connected: Boolean?,
+    checking: Boolean,
+    onServerUrlChange: (String) -> Unit,
+    onGatewayIdChange: (String) -> Unit,
+    onSaveAndCheck: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Backend",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            OutlinedTextField(
+                value = serverUrl,
+                onValueChange = onServerUrlChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("URL del servidor") },
+                singleLine = true
+            )
+
+            OutlinedTextField(
+                value = gatewayId,
+                onValueChange = onGatewayIdChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Gateway ID") },
+                singleLine = true
+            )
+
+            Text(
+                text = statusMessage,
+                color = when (connected) {
+                    true -> MaterialTheme.colorScheme.primary
+                    false -> MaterialTheme.colorScheme.error
+                    null -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            Button(
+                onClick = onSaveAndCheck,
+                enabled = !checking,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (checking) "Probando…" else "Guardar y probar conexión")
             }
         }
     }

@@ -11,3 +11,7 @@ app/build/
 *.jks
 *.keystore
 .tools/
+
+backend/node_modules/
+backend/dist/
+backend/*.log
