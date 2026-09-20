@@ -1,42 +1,90 @@
 # Arquitectura
 
-## v0.3.0
+## Estado actual
 
 ```text
-                       Android App
-                           |
-              +------------+------------+
-              |                         |
-              v                         v
-    GatewayForegroundService       Compose UI
-      remoteMessaging                   |
-              |                         v
-              |                   SendSmsUseCase
-              |                    /          \
-              |                   v            v
-              |             SmsJobStore    SmsTransport
-              |                   |            |
-              |                   v            v
-      Socket.IO pendiente        Room      SmsManager
-                                   ^       /       \
-                                   |    SENT      DELIVERED
-                                   +------+----------+
+                       Sistema externo
+                             |
+                   POST /api/v1/messages
+                             |
+                             v
+                 +-----------------------+
+                 | Express + Prisma      |
+                 | PostgreSQL            |
+                 +----------+------------+
+                            |
+                    sms.available
+                      Socket.IO
+                            |
+                            v
+                 +-----------------------+
+                 | GatewayForeground     |
+                 | Service               |
+                 +----------+------------+
+                            |
+                         REST claim
+                            |
+                            v
+                           Room
+                            |
+                      SendSmsUseCase
+                            |
+                       SmsTransport
+                            |
+                       SmsManager
+                       /       \
+                    SENT     DELIVERED
+                       \       /
+                        v     v
+                   REST status update
+                            |
+                            v
+                       PostgreSQL
 ```
 
-## Domain
+## Fuentes de verdad
 
-- `SmsJob`
-- `SmsJobStatus`
-- `SmsJobRequest`
-- `SmsJobStore`
-- `SmsTransport`
-- `SendSmsUseCase`
+- PostgreSQL: trabajos remotos, gateway registrado y estado global.
+- Room: ledger local del A03.
+- Socket.IO: señalización de baja latencia, no persistencia.
 
-## Persistencia
+## Backend
 
-Room mantiene `sms_jobs` y genera el schema en `app/schemas/`.
+### Gateway
 
-Estados:
+`Gateway` almacena:
+
+- `gatewayId`
+- hash SHA-256 del token
+- identificador/modelo del dispositivo
+- versión Android/app
+- `enabled`
+- `lastSeenAt`
+
+El token en claro solo se entrega al dispositivo durante el registro.
+
+### SmsMessage
+
+Estados remotos:
+
+```text
+QUEUED -> CLAIMED -> SENT -> DELIVERED
+                    |
+                    +-----> FAILED
+```
+
+Reglas:
+
+- `idempotencyKey` es UNIQUE.
+- El claim de `QUEUED` usa un update condicional en PostgreSQL.
+- Un segundo claim del mismo gateway no aumenta `attempts`.
+- Otro gateway no puede reclamar el job.
+- Un `SENT` tardío no degrada `DELIVERED`.
+- Un `SENT` tardío puede completar `sentAt` si faltaba, manteniendo `DELIVERED`.
+
+## Android
+
+Estados locales:
 
 ```text
 QUEUED -> SENDING -> SENT -> DELIVERED
@@ -44,54 +92,71 @@ QUEUED -> SENDING -> SENT -> DELIVERED
               +-----------> FAILED
 ```
 
-`RETRY_PENDING` está reservado para reconciliación/reintentos.
+`RETRY_PENDING` queda reservado para reconciliación controlada.
 
 ## Idempotencia
+
+### Backend
+
+```text
+idempotencyKey
+      |
+ PostgreSQL UNIQUE
+      |
+ +----+----+
+ |         |
+new     existing
+ |         |
+create   return same job
+```
+
+### Android
 
 ```text
 jobId remoto
     |
-    v
 Room INSERT OR IGNORE
     |
-    +-- nuevo ----> enviar
-    |
-    +-- existe ---> no enviar
+ +-- nuevo ----> enviar
+ |
+ +-- existe ---> no enviar
 ```
 
-El contenido del SMS no se usa como clave de idempotencia; dos trabajos distintos
-pueden contener exactamente el mismo número y mensaje.
+## Heartbeat
 
-## Foreground Service
+El A03 emite `gateway.heartbeat` por Socket.IO.
 
-`GatewayForegroundService`:
+El backend:
 
-- se inicia desde una interacción visible del usuario;
-- usa una notificación persistente;
-- declara `remoteMessaging`;
-- utiliza `FOREGROUND_SERVICE_REMOTE_MESSAGING` en API 34+;
-- será el propietario de la conexión Socket.IO en la siguiente fase.
+1. actualiza `lastSeenAt` en PostgreSQL;
+2. devuelve ACK;
+3. Android marca el heartbeat como exitoso solo al recibir dicho ACK.
 
-No usamos `dataSync` como servicio persistente.
-
-## Arquitectura objetivo
+## Desarrollo
 
 ```text
-Backend
-   |
-Socket.IO
-(solo señalización)
-   |
-GatewayForegroundService
-   |
-REST claim/sync
-   |
-Room
-   |
-SendSmsUseCase
-   |
-SmsManager
+A03
+ |
+ | http://127.0.0.1:3000
+ v
+ADB reverse tcp:3000
+ |
+ v
+PC backend
+ |
+ v
+PostgreSQL Docker :54329
 ```
 
-Backend + Room serán las fuentes de consistencia. Socket.IO solamente reducirá
-latencia.
+## Siguiente fase: reconciliación
+
+La regla principal será:
+
+> Un job local ambiguo en `SENDING` después de un crash no se reenvía automáticamente.
+
+La reconciliación comparará backend + Room y distinguirá trabajos:
+
+- recuperables;
+- ya finalizados;
+- pendientes de claim;
+- ambiguos que requieren política/manual review.

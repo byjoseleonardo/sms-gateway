@@ -1,104 +1,195 @@
-# SMS Gateway Android
+# SMS Gateway
 
 Gateway SMS nativo para un Samsung Galaxy A03.
 
-## Estado actual — v0.3.0
+## Estado actual
 
-Validado hasta ahora:
+Hitos validados:
 
+- Android nativo con Kotlin + Jetpack Compose.
 - Envío real mediante `SmsManager`.
-- Permiso `SEND_SMS`.
 - Callbacks `SENT` y `DELIVERED`.
-- Room 2.8.5.
-- Historial local.
-- Máquina de estados persistente.
-- Idempotencia por `jobId`.
-- Foreground Service para el gateway.
-- Tipo de servicio `remoteMessaging`.
-- Notificación persistente del servicio.
-- Tests unitarios.
-- Artemis instalado localmente para E2E.
+- Room para historial y estado local.
+- Idempotencia local por `jobId`.
+- Foreground Service dedicado al gateway.
+- Retrofit/OkHttp para REST.
+- Registro y autenticación por gateway.
+- Socket.IO autenticado.
+- Heartbeat con ACK real del backend.
+- Cola remota `sms.available -> claim -> send -> status`.
+- PostgreSQL 17 + Prisma ORM 7.10.
+- Idempotencia remota por `idempotencyKey`.
+- Artemis E2E sobre Samsung físico.
+- E2E real backend -> A03 -> operador -> destinatario -> `DELIVERED`.
+
+Versiones de runtime actuales:
+
+- Android app: `0.6.0`
+- Backend: `0.4.0`
+- Hito de arquitectura: PostgreSQL/Prisma
 
 ## Stack
 
+### Android
+
 - Kotlin integrado de AGP 9.4
 - Jetpack Compose
-- Compose compiler plugin 2.2.10
 - Compose BOM 2026.09.00
-- Android Gradle Plugin 9.4.0
-- Gradle Wrapper 9.6.0
 - Room 2.8.5
-- KSP 2.3.12
-- Java target 17
-- Android Studio JBR 25
-- JUnit 4
+- DataStore
+- Retrofit 3
+- OkHttp
+- Socket.IO client
+- Foreground Service
+- Android `SmsManager`
+- JUnit
 
-## Arquitectura Android
+### Backend
+
+- Node.js 24
+- TypeScript 6
+- Express 5
+- Socket.IO 4
+- Zod
+- Prisma ORM 7.10
+- PostgreSQL 17
+- Docker Compose
+
+### Testing
+
+- Unit tests Android
+- Tests de dominio backend
+- PostgreSQL real para tests del registro de mensajes
+- Samsung Galaxy A03 físico
+- Artemis para E2E visual/agéntico
+
+## Arquitectura
 
 ```text
-                      Compose UI
-                          |
-             +------------+------------+
-             |                         |
-             v                         v
-     GatewayForegroundService    SendSmsUseCase
-     remoteMessaging             /          \
-             |                  /            \
-     [Socket.IO después]       v              v
-                         SmsJobStore       SmsTransport
-                              |                 |
-                              v                 v
-                             Room           SmsManager
-                              ^            /         \
-                              |        SENT           DELIVERED
-                              +----------+---------------+
+Cliente / sistema externo
+          |
+          | POST /api/v1/messages
+          v
++-----------------------------+
+| Node.js / Express / Prisma  |
+| PostgreSQL                  |
++-------------+---------------+
+              |
+              | Socket.IO: sms.available
+              v
++-----------------------------+
+| Samsung A03                 |
+| GatewayForegroundService    |
++-------------+---------------+
+              |
+              | REST claim
+              v
+        Room SmsJob
+              |
+              v
+         SmsManager
+          /      \
+       SENT    DELIVERED
+          \      /
+           v    v
+       Backend status
+              |
+              v
+         PostgreSQL
 ```
+
+Socket.IO es señalización. PostgreSQL + Room mantienen la consistencia.
 
 ## Idempotencia
 
-`SmsJob.id` es la clave primaria local. Si el mismo trabajo se entrega dos veces,
-el segundo `INSERT OR IGNORE` no llega a `SmsManager`.
+Hay dos niveles:
 
-## Foreground Service
+```text
+Solicitud externa
+    |
+idempotencyKey UNIQUE (PostgreSQL)
+    |
+    +-- primera vez -> crea job
+    +-- repetida    -> devuelve el mismo job
 
-El servicio se inicia explícitamente desde la UI y mantiene una notificación
-visible. Actualmente mantiene la infraestructura del gateway activa; la conexión
-Socket.IO se añadirá en la siguiente fase.
+jobId remoto
+    |
+Room INSERT OR IGNORE
+    |
+    +-- nuevo  -> SmsManager
+    +-- existe -> no duplica el envío
+```
+
+El E2E remoto validó que repetir la misma solicitud mantiene:
+
+```text
+created: false
+attempts: 1
+status: DELIVERED
+```
+
+## Desarrollo local
+
+Backend:
+
+```powershell
+cd D:\SMS\backend
+docker compose up -d
+npm install
+npm run db:migrate
+npm run dev
+```
+
+Android conectado por USB:
+
+```powershell
+adb reverse tcp:3000 tcp:3000
+```
+
+La app usa durante desarrollo:
+
+```text
+http://127.0.0.1:3000/
+```
+
+que ADB redirige al backend de la PC.
 
 ## Verificación
+
+Android:
 
 ```powershell
 .\gradlew.bat test assembleDebug
 ```
 
-Resultado actual:
+Backend:
 
-```text
-BUILD SUCCESSFUL
-44 actionable tasks
+```powershell
+cd backend
+npm run check
+npm test
 ```
 
-APK:
+Los tests de backend cubren:
 
-```text
-app/build/outputs/apk/debug/app-debug.apk
-```
+- idempotencia por `idempotencyKey`;
+- claim idempotente;
+- rechazo de otro gateway;
+- protección contra degradar `DELIVERED` con un `SENT` tardío.
 
 ## Hardware validado
 
 - Samsung SM-A037M / Galaxy A03
 - Android 13 / API 33
+- SIM activa
 - ADB autorizado
-- SIM capaz de enviar SMS
-- Base local `sms-gateway.db`
+- entrega SMS real confirmada
 
 ## Próximas etapas
 
-1. Validar Foreground Service v0.3 en el A03.
-2. Completar Artemis con dispositivo desbloqueado y credencial local.
-3. Retrofit + OkHttp.
-4. Registro/autenticación del gateway.
-5. Socket.IO para señalización.
-6. REST claim/sync.
-7. Backend Node.js/Express/PostgreSQL.
-8. WorkManager para reconciliación.
+1. Reconciliación tras reinicios/desconexiones.
+2. Política para jobs ambiguos en estado `SENDING`.
+3. WorkManager como watchdog eventual.
+4. Autenticación de clientes que crean mensajes.
+5. Rate limiting y auditoría.
+6. HTTPS/VPS y PostgreSQL de producción.

@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SmsMessageStatus {
+  QUEUED
+  CLAIMED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+model Gateway {
+  gatewayId      String       @id @map("gateway_id") @db.VarChar(64)
+  tokenHash      String       @map("token_hash") @db.VarChar(64)
+  deviceId       String       @map("device_id") @db.VarChar(128)
+  deviceModel    String       @map("device_model") @db.VarChar(128)
+  androidVersion String       @map("android_version") @db.VarChar(64)
+  appVersion     String       @map("app_version") @db.VarChar(64)
+  enabled        Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  lastSeenAt     DateTime?    @map("last_seen_at")
+  messages       SmsMessage[]
+
+  @@index([lastSeenAt])
+  @@map("gateways")
+}
+
+model SmsMessage {
+  id             String           @id @db.VarChar(64)
+  idempotencyKey String           @unique @map("idempotency_key") @db.VarChar(128)
+  gatewayId      String           @map("gateway_id") @db.VarChar(64)
+  destination    String           @db.VarChar(32)
+  message        String           @db.VarChar(160)
+  status         SmsMessageStatus @default(QUEUED)
+  attempts       Int              @default(0)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  claimedAt      DateTime?        @map("claimed_at")
+  sentAt         DateTime?        @map("sent_at")
+  deliveredAt    DateTime?        @map("delivered_at")
+  lastError      String?          @map("last_error") @db.VarChar(500)
+  gateway        Gateway          @relation(fields: [gatewayId], references: [gatewayId], onDelete: Restrict)
+
+  @@index([gatewayId, status, createdAt])
+  @@map("sms_messages")
+}

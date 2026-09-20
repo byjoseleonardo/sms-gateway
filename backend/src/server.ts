@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { Server as SocketIoServer } from "socket.io";
 import { z } from "zod";
 import { APP_VERSION, createApp } from "./app.js";
+import { createPrismaClient } from "./db/prisma.js";
 import { GatewayRegistry } from "./gateways/GatewayRegistry.js";
 import { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 
@@ -11,8 +12,9 @@ const envSchema = z.object({
 });
 
 const env = envSchema.parse(process.env);
-const gatewayRegistry = new GatewayRegistry();
-const messageRegistry = new SmsMessageRegistry();
+const prisma = createPrismaClient();
+const gatewayRegistry = new GatewayRegistry(prisma);
+const messageRegistry = new SmsMessageRegistry(prisma);
 
 let io: SocketIoServer;
 
@@ -114,6 +116,28 @@ io.on("connection", async socket => {
       `Gateway ${gatewayId} disconnected: ${reason}`
     );
   });
+});
+
+async function shutdown(signal: string) {
+  console.log(`Received ${signal}; shutting down`);
+
+  io.close();
+  httpServer.close(async () => {
+    await prisma.$disconnect();
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    process.exit(1);
+  }, 5_000).unref();
+}
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
 });
 
 httpServer.listen(env.PORT, env.HOST, () => {

@@ -15,5 +15,6 @@ app/build/
 backend/node_modules/
 backend/dist/
 backend/*.log
-backend/data/gateways.json
+backend/data/*.json
 backend/data/*.tmp
+backend/src/generated/prisma/

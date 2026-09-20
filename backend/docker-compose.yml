@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: sms-gateway-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: smsgateway
+      POSTGRES_PASSWORD: smsgateway_dev
+      POSTGRES_DB: smsgateway
+    ports:
+      - "54329:5432"
+    volumes:
+      - sms_gateway_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smsgateway -d smsgateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sms_gateway_pgdata:

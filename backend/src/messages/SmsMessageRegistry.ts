@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import type { AppPrismaClient } from "../db/prisma.js";
 
 export type SmsMessageStatus =
   | "QUEUED"
@@ -25,15 +24,9 @@ export type SmsMessageRecord = {
   lastError: string | null;
 };
 
-type SmsMessageData = {
-  messages: SmsMessageRecord[];
-};
-
 export class SmsMessageRegistry {
-  private mutationQueue: Promise<void> = Promise.resolve();
-
   constructor(
-    private readonly filePath = path.resolve("data/messages.json")
+    private readonly prisma: AppPrismaClient
   ) {}
 
   async enqueue(input: {
@@ -42,80 +35,100 @@ export class SmsMessageRegistry {
     destination: string;
     message: string;
   }): Promise<{ message: SmsMessageRecord; created: boolean }> {
-    return this.mutate(async () => {
-      const data = await this.readData();
+    const existing = await this.prisma.smsMessage.findUnique({
+      where: {
+        idempotencyKey: input.idempotencyKey
+      }
+    });
 
-      const existing = data.messages.find(
-        item => item.idempotencyKey === input.idempotencyKey
-      );
+    if (existing) {
+      return {
+        message: toRecord(existing),
+        created: false
+      };
+    }
 
-      if (existing) {
+    try {
+      const created = await this.prisma.smsMessage.create({
+        data: {
+          id: `sms_${randomUUID()}`,
+          idempotencyKey: input.idempotencyKey,
+          gatewayId: input.gatewayId,
+          destination: input.destination,
+          message: input.message,
+          status: "QUEUED"
+        }
+      });
+
+      return {
+        message: toRecord(created),
+        created: true
+      };
+    } catch (error) {
+      const raced = await this.prisma.smsMessage.findUnique({
+        where: {
+          idempotencyKey: input.idempotencyKey
+        }
+      });
+
+      if (raced) {
         return {
-          message: existing,
+          message: toRecord(raced),
           created: false
         };
       }
 
-      const now = new Date().toISOString();
-
-      const record: SmsMessageRecord = {
-        id: `sms_${randomUUID()}`,
-        idempotencyKey: input.idempotencyKey,
-        gatewayId: input.gatewayId,
-        destination: input.destination,
-        message: input.message,
-        status: "QUEUED",
-        attempts: 0,
-        createdAt: now,
-        updatedAt: now,
-        claimedAt: null,
-        sentAt: null,
-        deliveredAt: null,
-        lastError: null
-      };
-
-      data.messages.push(record);
-      await this.writeData(data);
-
-      return {
-        message: record,
-        created: true
-      };
-    });
+      throw error;
+    }
   }
 
   async claim(jobId: string, gatewayId: string) {
-    return this.mutate(async () => {
-      const data = await this.readData();
-      const message = data.messages.find(item => item.id === jobId);
+    const now = new Date();
 
-      if (!message) return { kind: "not_found" as const };
-
-      if (message.gatewayId !== gatewayId) {
-        return { kind: "forbidden" as const };
+    const claimed = await this.prisma.smsMessage.updateMany({
+      where: {
+        id: jobId,
+        gatewayId,
+        status: "QUEUED"
+      },
+      data: {
+        status: "CLAIMED",
+        claimedAt: now,
+        attempts: {
+          increment: 1
+        },
+        lastError: null
       }
-
-      if (message.status === "QUEUED") {
-        const now = new Date().toISOString();
-        message.status = "CLAIMED";
-        message.claimedAt = now;
-        message.updatedAt = now;
-        message.attempts += 1;
-        await this.writeData(data);
-      }
-
-      if (message.status === "CLAIMED") {
-        return {
-          kind: "claimed" as const,
-          message
-        };
-      }
-
-      return {
-        kind: "already_processed" as const,
-        message
-      };
     });
+
+    const message = await this.prisma.smsMessage.findUnique({
+      where: {
+        id: jobId
+      }
+    });
+
+    if (!message) {
+      return { kind: "not_found" as const };
+    }
+
+    if (message.gatewayId !== gatewayId) {
+      return { kind: "forbidden" as const };
+    }
+
+    if (
+      claimed.count === 1 ||
+      message.status === "CLAIMED"
+    ) {
+      return {
+        kind: "claimed" as const,
+        message: toRecord(message)
+      };
+    }
+
+    return {
+      kind: "already_processed" as const,
+      message: toRecord(message)
+    };
   }
 
   async updateStatus(
@@ -124,115 +137,151 @@ export class SmsMessageRegistry {
     status: "SENT" | "DELIVERED" | "FAILED",
     error?: string
   ) {
-    return this.mutate(async () => {
-      const data = await this.readData();
-      const message = data.messages.find(item => item.id === jobId);
-
-      if (!message) return { kind: "not_found" as const };
-
-      if (message.gatewayId !== gatewayId) {
-        return { kind: "forbidden" as const };
+    const initial = await this.prisma.smsMessage.findUnique({
+      where: {
+        id: jobId
       }
-
-      if (message.status === "DELIVERED") {
-        return { kind: "updated" as const, message };
-      }
-
-      const now = new Date().toISOString();
-
-      if (status === "SENT") {
-        if (message.status === "CLAIMED") {
-          message.status = "SENT";
-          message.sentAt = now;
-          message.updatedAt = now;
-          message.lastError = null;
-          await this.writeData(data);
-        }
-
-        return { kind: "updated" as const, message };
-      }
-
-      if (status === "DELIVERED") {
-        if (
-          message.status === "CLAIMED" ||
-          message.status === "SENT"
-        ) {
-          message.status = "DELIVERED";
-          message.sentAt ??= now;
-          message.deliveredAt = now;
-          message.updatedAt = now;
-          message.lastError = null;
-          await this.writeData(data);
-        }
-
-        return { kind: "updated" as const, message };
-      }
-
-      if (status === "FAILED" && message.status === "CLAIMED") {
-        message.status = "FAILED";
-        message.updatedAt = now;
-        message.lastError = error?.trim() || "unknown_error";
-        await this.writeData(data);
-      }
-
-      return { kind: "updated" as const, message };
     });
+
+    if (!initial) {
+      return { kind: "not_found" as const };
+    }
+
+    if (initial.gatewayId !== gatewayId) {
+      return { kind: "forbidden" as const };
+    }
+
+    const now = new Date();
+
+    if (status === "SENT") {
+      await this.prisma.smsMessage.updateMany({
+        where: {
+          id: jobId,
+          gatewayId,
+          status: "CLAIMED"
+        },
+        data: {
+          status: "SENT",
+          sentAt: now,
+          lastError: null
+        }
+      });
+
+      await this.prisma.smsMessage.updateMany({
+        where: {
+          id: jobId,
+          gatewayId,
+          status: "DELIVERED",
+          sentAt: null
+        },
+        data: {
+          sentAt: now
+        }
+      });
+    }
+
+    if (status === "DELIVERED") {
+      await this.prisma.smsMessage.updateMany({
+        where: {
+          id: jobId,
+          gatewayId,
+          status: {
+            in: ["CLAIMED", "SENT"]
+          }
+        },
+        data: {
+          status: "DELIVERED",
+          deliveredAt: now,
+          lastError: null
+        }
+      });
+    }
+
+    if (status === "FAILED") {
+      await this.prisma.smsMessage.updateMany({
+        where: {
+          id: jobId,
+          gatewayId,
+          status: "CLAIMED"
+        },
+        data: {
+          status: "FAILED",
+          lastError: error?.trim() || "unknown_error"
+        }
+      });
+    }
+
+    const message = await this.prisma.smsMessage.findUnique({
+      where: {
+        id: jobId
+      }
+    });
+
+    if (!message) {
+      return { kind: "not_found" as const };
+    }
+
+    return {
+      kind: "updated" as const,
+      message: toRecord(message)
+    };
   }
 
   async get(jobId: string) {
-    const data = await this.readData();
-    return data.messages.find(item => item.id === jobId) ?? null;
+    const message = await this.prisma.smsMessage.findUnique({
+      where: {
+        id: jobId
+      }
+    });
+
+    return message ? toRecord(message) : null;
   }
 
   async getAvailableForGateway(gatewayId: string) {
-    const data = await this.readData();
-
-    return data.messages.filter(
-      item =>
-        item.gatewayId === gatewayId &&
-        (item.status === "QUEUED" || item.status === "CLAIMED")
-    );
-  }
-
-  private mutate<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.mutationQueue.then(operation, operation);
-    this.mutationQueue = result.then(
-      () => undefined,
-      () => undefined
-    );
-    return result;
-  }
-
-  private async readData(): Promise<SmsMessageData> {
-    try {
-      const raw = await fs.readFile(this.filePath, "utf8");
-      return JSON.parse(raw) as SmsMessageData;
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        (error as NodeJS.ErrnoException).code === "ENOENT"
-      ) {
-        return { messages: [] };
+    const messages = await this.prisma.smsMessage.findMany({
+      where: {
+        gatewayId,
+        status: {
+          in: ["QUEUED", "CLAIMED"]
+        }
+      },
+      orderBy: {
+        createdAt: "asc"
       }
-      throw error;
-    }
+    });
+
+    return messages.map(toRecord);
   }
+}
 
-  private async writeData(data: SmsMessageData) {
-    await fs.mkdir(
-      path.dirname(this.filePath),
-      { recursive: true }
-    );
-
-    const tempPath = `${this.filePath}.tmp`;
-
-    await fs.writeFile(
-      tempPath,
-      JSON.stringify(data, null, 2),
-      "utf8"
-    );
-
-    await fs.rename(tempPath, this.filePath);
-  }
+function toRecord(message: {
+  id: string;
+  idempotencyKey: string;
+  gatewayId: string;
+  destination: string;
+  message: string;
+  status: SmsMessageStatus;
+  attempts: number;
+  createdAt: Date;
+  updatedAt: Date;
+  claimedAt: Date | null;
+  sentAt: Date | null;
+  deliveredAt: Date | null;
+  lastError: string | null;
+}): SmsMessageRecord {
+  return {
+    id: message.id,
+    idempotencyKey: message.idempotencyKey,
+    gatewayId: message.gatewayId,
+    destination: message.destination,
+    message: message.message,
+    status: message.status,
+    attempts: message.attempts,
+    createdAt: message.createdAt.toISOString(),
+    updatedAt: message.updatedAt.toISOString(),
+    claimedAt: message.claimedAt?.toISOString() ?? null,
+    sentAt: message.sentAt?.toISOString() ?? null,
+    deliveredAt: message.deliveredAt?.toISOString() ?? null,
+    lastError: message.lastError
+  };
 }

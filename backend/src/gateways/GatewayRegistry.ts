@@ -1,6 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import type { AppPrismaClient } from "../db/prisma.js";
 
 export type GatewayRecord = {
   gatewayId: string;
@@ -15,10 +14,6 @@ export type GatewayRecord = {
   lastSeenAt: string | null;
 };
 
-type GatewayRegistryData = {
-  gateways: GatewayRecord[];
-};
-
 export class GatewayRegistrationConflictError extends Error {
   constructor(gatewayId: string) {
     super(`Gateway ${gatewayId} ya pertenece a otro dispositivo`);
@@ -28,7 +23,7 @@ export class GatewayRegistrationConflictError extends Error {
 
 export class GatewayRegistry {
   constructor(
-    private readonly filePath = path.resolve("data/gateways.json")
+    private readonly prisma: AppPrismaClient
   ) {}
 
   async register(input: {
@@ -38,17 +33,11 @@ export class GatewayRegistry {
     androidVersion: string;
     appVersion: string;
   }) {
-    const data = await this.readData();
-    const now = new Date().toISOString();
-
-    const existingIndex = data.gateways.findIndex(
-      gateway => gateway.gatewayId === input.gatewayId
-    );
-
-    const existing =
-      existingIndex >= 0
-        ? data.gateways[existingIndex]
-        : undefined;
+    const existing = await this.prisma.gateway.findUnique({
+      where: {
+        gatewayId: input.gatewayId
+      }
+    });
 
     if (existing && existing.deviceId !== input.deviceId) {
       throw new GatewayRegistrationConflictError(input.gatewayId);
@@ -56,32 +45,36 @@ export class GatewayRegistry {
 
     const token = randomBytes(32).toString("base64url");
     const tokenHash = hashToken(token);
+    const now = new Date();
 
-    const record: GatewayRecord = {
-      gatewayId: input.gatewayId,
-      tokenHash,
-      deviceId: input.deviceId,
-      deviceModel: input.deviceModel,
-      androidVersion: input.androidVersion,
-      appVersion: input.appVersion,
-      enabled: existing?.enabled ?? true,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-      lastSeenAt: now
-    };
-
-    if (existingIndex >= 0) {
-      data.gateways[existingIndex] = record;
-    } else {
-      data.gateways.push(record);
-    }
-
-    await this.writeData(data);
+    const gateway = await this.prisma.gateway.upsert({
+      where: {
+        gatewayId: input.gatewayId
+      },
+      create: {
+        gatewayId: input.gatewayId,
+        tokenHash,
+        deviceId: input.deviceId,
+        deviceModel: input.deviceModel,
+        androidVersion: input.androidVersion,
+        appVersion: input.appVersion,
+        enabled: true,
+        lastSeenAt: now
+      },
+      update: {
+        tokenHash,
+        deviceId: input.deviceId,
+        deviceModel: input.deviceModel,
+        androidVersion: input.androidVersion,
+        appVersion: input.appVersion,
+        lastSeenAt: now
+      }
+    });
 
     return {
-      gatewayId: record.gatewayId,
+      gatewayId: gateway.gatewayId,
       token,
-      registeredAt: now
+      registeredAt: now.toISOString()
     };
   }
 
@@ -89,10 +82,11 @@ export class GatewayRegistry {
     gatewayId: string,
     token: string
   ): Promise<boolean> {
-    const data = await this.readData();
-    const gateway = data.gateways.find(
-      item => item.gatewayId === gatewayId
-    );
+    const gateway = await this.prisma.gateway.findUnique({
+      where: {
+        gatewayId
+      }
+    });
 
     if (!gateway || !gateway.enabled) return false;
 
@@ -103,37 +97,44 @@ export class GatewayRegistry {
       timingSafeEqual(actual, expected);
   }
 
-  async touch(gatewayId: string, appVersion?: string) {
-    const data = await this.readData();
-    const gateway = data.gateways.find(
-      item => item.gatewayId === gatewayId
-    );
+  async touch(
+    gatewayId: string,
+    appVersion?: string
+  ): Promise<GatewayRecord | null> {
+    const now = new Date();
 
-    if (!gateway || !gateway.enabled) return null;
+    const result = await this.prisma.gateway.updateMany({
+      where: {
+        gatewayId,
+        enabled: true
+      },
+      data: {
+        lastSeenAt: now,
+        ...(appVersion ? { appVersion } : {})
+      }
+    });
 
-    const now = new Date().toISOString();
-    gateway.lastSeenAt = now;
-    gateway.updatedAt = now;
+    if (result.count === 0) return null;
 
-    if (appVersion) {
-      gateway.appVersion = appVersion;
-    }
+    const gateway = await this.prisma.gateway.findUnique({
+      where: {
+        gatewayId
+      }
+    });
 
-    await this.writeData(data);
-    return gateway;
+    return gateway ? toGatewayRecord(gateway) : null;
   }
 
   async getStatus(gatewayId: string) {
-    const data = await this.readData();
-    const gateway = data.gateways.find(
-      item => item.gatewayId === gatewayId
-    );
+    const gateway = await this.prisma.gateway.findUnique({
+      where: {
+        gatewayId
+      }
+    });
 
     if (!gateway) return null;
 
-    const lastSeenMs = gateway.lastSeenAt
-      ? Date.parse(gateway.lastSeenAt)
-      : 0;
+    const lastSeenMs = gateway.lastSeenAt?.getTime() ?? 0;
 
     return {
       gatewayId: gateway.gatewayId,
@@ -142,45 +143,38 @@ export class GatewayRegistry {
         gateway.enabled &&
         lastSeenMs > 0 &&
         Date.now() - lastSeenMs < 45_000,
-      lastSeenAt: gateway.lastSeenAt,
+      lastSeenAt: gateway.lastSeenAt?.toISOString() ?? null,
       deviceModel: gateway.deviceModel,
       androidVersion: gateway.androidVersion,
       appVersion: gateway.appVersion
     };
   }
+}
 
-  private async readData(): Promise<GatewayRegistryData> {
-    try {
-      const raw = await fs.readFile(this.filePath, "utf8");
-      return JSON.parse(raw) as GatewayRegistryData;
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        (error as NodeJS.ErrnoException).code === "ENOENT"
-      ) {
-        return { gateways: [] };
-      }
-      throw error;
-    }
-  }
-
-  private async writeData(data: GatewayRegistryData) {
-    await fs.mkdir(
-      path.dirname(this.filePath),
-      { recursive: true }
-    );
-
-    const tempPath = `${this.filePath}.tmp`;
-
-    await fs.writeFile(
-      tempPath,
-      JSON.stringify(data, null, 2),
-      "utf8"
-    );
-
-    await fs.rename(tempPath, this.filePath);
-  }
+function toGatewayRecord(gateway: {
+  gatewayId: string;
+  tokenHash: string;
+  deviceId: string;
+  deviceModel: string;
+  androidVersion: string;
+  appVersion: string;
+  enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  lastSeenAt: Date | null;
+}): GatewayRecord {
+  return {
+    gatewayId: gateway.gatewayId,
+    tokenHash: gateway.tokenHash,
+    deviceId: gateway.deviceId,
+    deviceModel: gateway.deviceModel,
+    androidVersion: gateway.androidVersion,
+    appVersion: gateway.appVersion,
+    enabled: gateway.enabled,
+    createdAt: gateway.createdAt.toISOString(),
+    updatedAt: gateway.updatedAt.toISOString(),
+    lastSeenAt: gateway.lastSeenAt?.toISOString() ?? null
+  };
 }
 
 function hashToken(token: string) {
