@@ -82,11 +82,17 @@ Se conserva únicamente para transición/desarrollo. El runtime ya no depende de
 
 ## Desarrollo
 
+Antes de arrancar el backend define una clave de operador de al menos 32 caracteres.
+No la guardes en Git.
+
 ```powershell
+$env:OPERATOR_API_KEY = "<clave-larga-y-aleatoria>"
 npm install
 docker compose up -d
 npm run dev
 ```
+
+La clave protege los endpoints de control que crean y consultan mensajes.
 
 Health:
 
@@ -102,6 +108,12 @@ Health:
 - `GET /api/v1/gateways/:gatewayId/status`
 
 ### Mensajes
+
+Requieren:
+
+```http
+Authorization: Bearer <OPERATOR_API_KEY>
+```
 
 - `POST /api/v1/messages`
 - `GET /api/v1/messages/:jobId`
@@ -143,6 +155,14 @@ npm test
 
 Los tests de `SmsMessageRegistry` se ejecutan contra PostgreSQL real y verifican
 las reglas críticas de concurrencia/idempotencia.
+
+## Seguridad
+
+- El token del gateway y la API key de operador son credenciales distintas.
+- La API key de operador nunca se guarda en el repositorio.
+- Los endpoints Android siguen autenticándose con `gatewayId + token`.
+- Health permanece público para monitorización.
+- El backend no habilita CORS para navegadores por defecto.
 
 ## Estado validado
 

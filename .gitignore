@@ -18,3 +18,7 @@ backend/*.log
 backend/data/*.json
 backend/data/*.tmp
 backend/src/generated/prisma/
+
+backend/.env
+backend/.env.*
+!backend/.env.example

@@ -1,4 +1,3 @@
-import cors from "cors";
 import express from "express";
 import { z } from "zod";
 import {
@@ -7,8 +6,9 @@ import {
 } from "./gateways/GatewayRegistry.js";
 import { gatewayAuth } from "./gateways/gatewayAuth.js";
 import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
+import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 
-export const APP_VERSION = "0.8.0";
+export const APP_VERSION = "0.9.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -37,13 +37,15 @@ const updateMessageStatusSchema = z.object({
 export function createApp(
   gatewayRegistry: GatewayRegistry,
   messageRegistry: SmsMessageRegistry,
-  onMessageAvailable: (gatewayId: string, jobId: string) => void
+  onMessageAvailable: (gatewayId: string, jobId: string) => void,
+  operatorApiKey: string
 ) {
   const app = express();
 
   app.disable("x-powered-by");
-  app.use(cors());
   app.use(express.json({ limit: "64kb" }));
+
+  const operatorAuth = operatorApiKeyAuth(operatorApiKey);
 
   app.get("/health", (_req, res) => {
     res.json({
@@ -142,7 +144,7 @@ export function createApp(
     }
   );
 
-  app.post("/api/v1/messages", async (req, res) => {
+  app.post("/api/v1/messages", operatorAuth, async (req, res) => {
     const parsed = enqueueMessageSchema.safeParse(req.body);
 
     if (!parsed.success) {
@@ -180,7 +182,7 @@ export function createApp(
     });
   });
 
-  app.get("/api/v1/messages/:jobId", async (req, res) => {
+  app.get("/api/v1/messages/:jobId", operatorAuth, async (req, res) => {
     const message = await messageRegistry.get(req.params.jobId as string);
 
     if (!message) {
