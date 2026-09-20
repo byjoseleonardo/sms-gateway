@@ -9,7 +9,7 @@ import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.11.0";
+export const APP_VERSION = "0.12.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -33,6 +33,19 @@ const enqueueMessageSchema = z.object({
 const updateMessageStatusSchema = z.object({
   status: z.enum(["SENT", "DELIVERED", "FAILED", "AMBIGUOUS"]),
   error: z.string().trim().max(500).optional()
+});
+
+const listMessagesQuerySchema = z.object({
+  gatewayId: z.string().trim().min(3).max(64).optional(),
+  status: z.enum([
+    "QUEUED",
+    "CLAIMED",
+    "SENT",
+    "DELIVERED",
+    "FAILED",
+    "AMBIGUOUS"
+  ]).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50)
 });
 
 export function createApp(
@@ -146,6 +159,32 @@ export function createApp(
       res.json(status);
     }
   );
+
+  app.get("/api/v1/gateways", operatorAuth, async (_req, res) => {
+    const gateways = await gatewayRegistry.list();
+
+    res.json({
+      gateways
+    });
+  });
+
+  app.get("/api/v1/messages", operatorAuth, async (req, res) => {
+    const parsed = listMessagesQuerySchema.safeParse(req.query);
+
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "invalid_message_query",
+        details: parsed.error.flatten()
+      });
+      return;
+    }
+
+    const messages = await messageRegistry.list(parsed.data);
+
+    res.json({
+      messages
+    });
+  });
 
   app.post("/api/v1/messages", operatorAuth, async (req, res) => {
     const parsed = enqueueMessageSchema.safeParse(req.body);

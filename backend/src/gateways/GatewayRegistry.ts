@@ -125,6 +125,35 @@ export class GatewayRegistry {
     return gateway ? toGatewayRecord(gateway) : null;
   }
 
+  async list() {
+    const gateways = await this.prisma.gateway.findMany({
+      orderBy: {
+        gatewayId: "asc"
+      }
+    });
+
+    const now = Date.now();
+
+    return gateways.map(gateway => {
+      const lastSeenMs =
+        gateway.lastSeenAt?.getTime() ?? 0;
+
+      return {
+        gatewayId: gateway.gatewayId,
+        enabled: gateway.enabled,
+        online:
+          gateway.enabled &&
+          lastSeenMs > 0 &&
+          now - lastSeenMs < 45_000,
+        lastSeenAt:
+          gateway.lastSeenAt?.toISOString() ?? null,
+        deviceModel: gateway.deviceModel,
+        androidVersion: gateway.androidVersion,
+        appVersion: gateway.appVersion
+      };
+    });
+  }
+
   async getStatus(gatewayId: string) {
     const gateway = await this.prisma.gateway.findUnique({
       where: {

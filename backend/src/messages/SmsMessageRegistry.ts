@@ -258,6 +258,48 @@ export class SmsMessageRegistry {
     return message ? toRecord(message) : null;
   }
 
+  async getQueuedForGateway(gatewayId: string) {
+    const messages = await this.prisma.smsMessage.findMany({
+      where: {
+        gatewayId,
+        status: "QUEUED"
+      },
+      orderBy: {
+        createdAt: "asc"
+      }
+    });
+
+    return messages.map(toRecord);
+  }
+
+  async list(input: {
+    gatewayId?: string;
+    status?: SmsMessageStatus;
+    limit?: number;
+  } = {}) {
+    const limit = Math.min(
+      Math.max(input.limit ?? 50, 1),
+      200
+    );
+
+    const messages = await this.prisma.smsMessage.findMany({
+      where: {
+        ...(input.gatewayId
+          ? { gatewayId: input.gatewayId }
+          : {}),
+        ...(input.status
+          ? { status: input.status }
+          : {})
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: limit
+    });
+
+    return messages.map(toRecord);
+  }
+
   async getAvailableForGateway(gatewayId: string) {
     const messages = await this.prisma.smsMessage.findMany({
       where: {

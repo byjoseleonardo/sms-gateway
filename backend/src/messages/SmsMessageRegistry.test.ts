@@ -202,3 +202,42 @@ test("ambiguous job can be resolved by a later SENT callback", async () => {
   assert.ok(resolved?.sentAt);
   assert.equal(resolved?.lastError, null);
 });
+
+
+test("heartbeat repair only reannounces QUEUED jobs", async () => {
+  const queued = await registry.enqueue({
+    idempotencyKey: `${keyPrefix}0006`,
+    gatewayId,
+    destination: "+51987654321",
+    message: "queued"
+  });
+
+  const claimed = await registry.enqueue({
+    idempotencyKey: `${keyPrefix}0007`,
+    gatewayId,
+    destination: "+51987654321",
+    message: "claimed"
+  });
+
+  await registry.claim(
+    claimed.message.id,
+    gatewayId
+  );
+
+  const repairCandidates =
+    await registry.getQueuedForGateway(gatewayId);
+
+  assert.equal(
+    repairCandidates.some(
+      job => job.id === queued.message.id
+    ),
+    true
+  );
+
+  assert.equal(
+    repairCandidates.some(
+      job => job.id === claimed.message.id
+    ),
+    false
+  );
+});

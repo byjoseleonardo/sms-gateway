@@ -107,10 +107,20 @@ io.on("connection", async socket => {
       appVersion
     );
 
+    const queuedJobs =
+      await messageRegistry.getQueuedForGateway(gatewayId);
+
+    for (const job of queuedJobs) {
+      socket.emit("sms.available", {
+        jobId: job.id
+      });
+    }
+
     if (typeof acknowledge === "function") {
       acknowledge({
         status: "ok",
-        lastSeenAt: gateway?.lastSeenAt ?? null
+        lastSeenAt: gateway?.lastSeenAt ?? null,
+        queuedJobsReannounced: queuedJobs.length
       });
     }
   });
