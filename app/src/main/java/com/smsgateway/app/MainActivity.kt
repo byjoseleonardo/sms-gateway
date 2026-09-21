@@ -18,7 +18,7 @@ class MainActivity : ComponentActivity() {
                     jobs = application.smsJobStore.observeRecent(),
                     gatewaySettings = application.gatewaySettingsStore.settings,
                     sendSms = application.sendSmsUseCase::execute,
-                    saveGatewaySettings = application.gatewaySettingsStore::save,
+                    saveGatewaySettings = application.gatewaySettingsStore::saveServerUrl,
                     saveEnrollmentKey = application.gatewaySettingsStore::saveEnrollmentKey,
                     checkBackend = application.backendHealthRepository::check
                 )

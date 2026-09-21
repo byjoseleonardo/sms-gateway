@@ -30,32 +30,62 @@ export class GatewayRegistry {
   ) {}
 
   async register(input: {
-    gatewayId: string;
+    gatewayId?: string;
     deviceId: string;
     deviceModel: string;
     androidVersion: string;
     appVersion: string;
   }) {
-    const existing = await this.prisma.gateway.findUnique({
-      where: {
-        gatewayId: input.gatewayId
-      }
-    });
+    const requestedGatewayId =
+      input.gatewayId?.trim() || null;
 
-    if (existing && existing.deviceId !== input.deviceId) {
-      throw new GatewayRegistrationConflictError(input.gatewayId);
+    const existingByDevice =
+      await this.prisma.gateway.findUnique({
+        where: {
+          deviceId: input.deviceId
+        }
+      });
+
+    if (
+      existingByDevice &&
+      requestedGatewayId &&
+      requestedGatewayId !== existingByDevice.gatewayId
+    ) {
+      throw new GatewayRegistrationConflictError(
+        requestedGatewayId
+      );
+    }
+
+    if (requestedGatewayId && !existingByDevice) {
+      const existingByGatewayId =
+        await this.prisma.gateway.findUnique({
+          where: {
+            gatewayId: requestedGatewayId
+          }
+        });
+
+      if (
+        existingByGatewayId &&
+        existingByGatewayId.deviceId !== input.deviceId
+      ) {
+        throw new GatewayRegistrationConflictError(
+          requestedGatewayId
+        );
+      }
     }
 
     const token = randomBytes(32).toString("base64url");
     const tokenHash = hashToken(token);
     const now = new Date();
+    const generatedGatewayId =
+      requestedGatewayId ?? createGatewayId();
 
     const gateway = await this.prisma.gateway.upsert({
       where: {
-        gatewayId: input.gatewayId
+        deviceId: input.deviceId
       },
       create: {
-        gatewayId: input.gatewayId,
+        gatewayId: generatedGatewayId,
         tokenHash,
         deviceId: input.deviceId,
         deviceModel: input.deviceModel,
@@ -68,7 +98,6 @@ export class GatewayRegistry {
         tokenHash,
         pendingTokenHash: null,
         pendingTokenExpiresAt: null,
-        deviceId: input.deviceId,
         deviceModel: input.deviceModel,
         androidVersion: input.androidVersion,
         appVersion: input.appVersion,
@@ -628,6 +657,10 @@ const ROUTING_HISTORY_WINDOW_MS =
   24 * 60 * 60 * 1_000;
 
 const TOKEN_ROTATION_TTL_MS = 5 * 60 * 1_000;
+
+function createGatewayId() {
+  return "gw_" + randomUUID();
+}
 
 function hashToken(token: string) {
   return createHash("sha256")

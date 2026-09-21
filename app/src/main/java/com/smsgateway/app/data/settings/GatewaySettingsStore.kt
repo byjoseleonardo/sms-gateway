@@ -49,7 +49,11 @@ class GatewaySettingsStore(
                 serverUrl = preferences[SERVER_URL]
                     ?: GatewaySettings.DEFAULT_SERVER_URL,
                 gatewayId = preferences[GATEWAY_ID]
-                    ?: GatewaySettings.DEFAULT_GATEWAY_ID,
+                    ?: if (!token.isNullOrBlank()) {
+                        GatewaySettings.LEGACY_DEFAULT_GATEWAY_ID
+                    } else {
+                        GatewaySettings.DEFAULT_GATEWAY_ID
+                    },
                 authToken = token,
                 enrollmentKey = enrollmentKey,
                 gatewayDesiredEnabled =
@@ -57,28 +61,45 @@ class GatewaySettingsStore(
             )
         }
 
-    suspend fun save(serverUrl: String, gatewayId: String) {
+    suspend fun saveServerUrl(serverUrl: String) {
         val normalizedUrl = normalizeServerUrl(serverUrl)
-        val normalizedGatewayId = gatewayId.trim()
-        require(normalizedGatewayId.isNotBlank()) {
-            "El identificador del gateway no puede estar vacío"
-        }
 
         context.gatewaySettingsDataStore.edit { preferences ->
-            val serverChanged =
-                preferences[SERVER_URL] != null &&
-                preferences[SERVER_URL] != normalizedUrl
-            val gatewayChanged =
-                preferences[GATEWAY_ID] != null &&
-                preferences[GATEWAY_ID] != normalizedGatewayId
+            val currentUrl =
+                preferences[SERVER_URL]
+                    ?: GatewaySettings.DEFAULT_SERVER_URL
+            val serverChanged = currentUrl != normalizedUrl
 
             preferences[SERVER_URL] = normalizedUrl
-            preferences[GATEWAY_ID] = normalizedGatewayId
 
-            if (serverChanged || gatewayChanged) {
+            if (serverChanged) {
+                preferences.remove(GATEWAY_ID)
                 preferences.remove(AUTH_TOKEN_ENCRYPTED)
                 preferences.remove(AUTH_TOKEN_LEGACY)
+                preferences.remove(ENROLLMENT_KEY_ENCRYPTED)
             }
+        }
+    }
+
+    suspend fun saveRegistration(
+        gatewayId: String,
+        token: String
+    ) {
+        val normalizedGatewayId = gatewayId.trim()
+        require(normalizedGatewayId.isNotBlank()) {
+            "El backend devolvió un Gateway ID vacío"
+        }
+        require(token.isNotBlank()) {
+            "El token del gateway no puede estar vacío"
+        }
+
+        val encrypted = tokenCipher.encrypt(token)
+
+        context.gatewaySettingsDataStore.edit { preferences ->
+            preferences[GATEWAY_ID] = normalizedGatewayId
+            preferences[AUTH_TOKEN_ENCRYPTED] = encrypted
+            preferences.remove(AUTH_TOKEN_LEGACY)
+            preferences.remove(ENROLLMENT_KEY_ENCRYPTED)
         }
     }
 

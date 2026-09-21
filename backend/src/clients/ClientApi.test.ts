@@ -30,6 +30,7 @@ let baseUrl = "";
 let clientId = "";
 let otherClientId = "";
 let adminClientId = "";
+let autoRegisteredGatewayId = "";
 let clientKey = "";
 let otherClientKey = "";
 const signaledJobs: string[] = [];
@@ -142,11 +143,50 @@ after(async () => {
 
   await prisma.gateway.deleteMany({
     where: {
-      gatewayId
+      gatewayId: {
+        in: [
+          gatewayId,
+          autoRegisteredGatewayId
+        ].filter(Boolean)
+      }
     }
   });
 
   await prisma.$disconnect();
+});
+
+test("gateway registration endpoint assigns an id when Android omits gatewayId", async () => {
+  const response = await fetch(
+    `${baseUrl}/api/v1/gateways/register`,
+    {
+      method: "POST",
+      headers: {
+        "x-gateway-enrollment-key": enrollmentKey,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        deviceId: `http-auto-device-${suffix}`,
+        deviceModel: "HTTP Auto Device",
+        androidVersion: "test",
+        appVersion: "0.18.0"
+      })
+    }
+  );
+
+  assert.equal(response.status, 201);
+
+  const body = await response.json() as {
+    gatewayId: string;
+    token: string;
+  };
+
+  autoRegisteredGatewayId = body.gatewayId;
+
+  assert.match(
+    body.gatewayId,
+    /^gw_[0-9a-f-]{36}$/
+  );
+  assert.ok(body.token.length >= 32);
 });
 
 test("external client API enqueues idempotently without a real gateway socket", async () => {

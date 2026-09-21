@@ -9,7 +9,8 @@ data class GatewaySettings(
 ) {
     companion object {
         const val DEFAULT_SERVER_URL = "http://127.0.0.1:3000/"
-        const val DEFAULT_GATEWAY_ID = "GW-A03-001"
+        const val DEFAULT_GATEWAY_ID = ""
+        const val LEGACY_DEFAULT_GATEWAY_ID = "GW-A03-001"
     }
 }
 

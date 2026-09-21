@@ -130,6 +130,8 @@ x-gateway-enrollment-key: <GATEWAY_ENROLLMENT_KEY>
 ```
 
 - `POST /api/v1/gateways/register`
+
+Desde v0.18 el Android no necesita definir `gatewayId`. El backend lo asigna automáticamente en el primer enrolamiento y lo devuelve junto con el token operativo. El `deviceId` identifica de forma estable al mismo dispositivo para conservar su `gatewayId` en un re-enrolamiento. El campo `gatewayId` sigue aceptándose temporalmente para compatibilidad con clientes Android anteriores.
 - `POST /api/v1/gateways/heartbeat`
 - `GET /api/v1/gateways/:gatewayId/status`
 
@@ -342,4 +344,21 @@ La selección prioriza:
 
 El panel de operador muestra la carga activa y las asignaciones de 24 horas de cada dispositivo. También permite fijar manualmente un gateway concreto cuando una integración o una prueba lo requiera.
 
-Para agregar un segundo teléfono basta instalar la app, configurarlo con un `gatewayId` distinto y enrolarlo con la clave correspondiente. No es necesario crear otro backend.
+Para agregar un segundo teléfono basta instalar la app y enrolarlo con la clave correspondiente. El backend asigna automáticamente un `gatewayId` distinto; no es necesario crear otro backend.
+
+
+## Identidad automática v0.18
+
+Los usuarios ya no escriben el identificador del gateway en Android.
+
+El flujo es:
+
+1. la app obtiene el identificador estable del dispositivo y sus datos de modelo;
+2. envía esos datos a `POST /api/v1/gateways/register` junto con la clave de enrolamiento;
+3. el backend genera un identificador con formato `gw_<uuid>` si el dispositivo todavía no existe;
+4. el backend devuelve `gatewayId + token`;
+5. Android guarda ambos localmente y elimina la clave de enrolamiento.
+
+Si el mismo dispositivo se vuelve a enrolar, el backend conserva el `gatewayId` ya asignado y emite una credencial nueva. El campo `device_id` tiene una restricción única en PostgreSQL para evitar que una misma instalación cree gateways duplicados.
+
+La interfaz Android muestra el Gateway ID únicamente como dato de solo lectura. En una instalación nueva aparece como **Pendiente de registro** hasta que el backend complete el enrolamiento.

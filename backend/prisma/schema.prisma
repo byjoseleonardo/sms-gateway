@@ -22,7 +22,7 @@ model Gateway {
   pendingTokenHash      String?      @map("pending_token_hash") @db.VarChar(64)
   pendingTokenExpiresAt DateTime?    @map("pending_token_expires_at")
   tokenRotatedAt        DateTime?    @map("token_rotated_at")
-  deviceId              String       @map("device_id") @db.VarChar(128)
+  deviceId              String       @unique @map("device_id") @db.VarChar(128)
   deviceModel    String       @map("device_model") @db.VarChar(128)
   androidVersion String       @map("android_version") @db.VarChar(64)
   appVersion     String       @map("app_version") @db.VarChar(64)

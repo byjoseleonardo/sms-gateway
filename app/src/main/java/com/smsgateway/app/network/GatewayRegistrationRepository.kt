@@ -9,7 +9,7 @@ import com.smsgateway.app.data.settings.GatewaySettingsStore
 import retrofit2.HttpException
 
 data class GatewayRegistrationRequest(
-    val gatewayId: String,
+    val gatewayId: String? = null,
     val deviceId: String,
     val deviceModel: String,
     val androidVersion: String,
@@ -103,18 +103,30 @@ class GatewayRegistrationRepository(
             .register(
                 enrollmentKey = enrollmentKey,
                 body = GatewayRegistrationRequest(
-                    gatewayId = settings.gatewayId,
+                    gatewayId =
+                        settings.gatewayId
+                            .takeIf(String::isNotBlank),
                     deviceId = deviceId,
-                    deviceModel = Build.MODEL,
+                    deviceModel =
+                        listOf(
+                            Build.MANUFACTURER,
+                            Build.MODEL
+                        )
+                            .filter(String::isNotBlank)
+                            .joinToString(" ")
+                            .trim(),
                     androidVersion = Build.VERSION.RELEASE,
                     appVersion = BuildConfig.VERSION_NAME
                 )
             )
 
-        settingsStore.saveToken(response.token)
-        settingsStore.clearEnrollmentKey()
+        settingsStore.saveRegistration(
+            gatewayId = response.gatewayId,
+            token = response.token
+        )
 
         return settings.copy(
+            gatewayId = response.gatewayId,
             authToken = response.token,
             enrollmentKey = null
         )

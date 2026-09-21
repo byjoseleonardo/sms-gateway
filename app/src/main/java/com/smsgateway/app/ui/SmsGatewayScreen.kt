@@ -78,7 +78,7 @@ fun SmsGatewayScreen(
     jobs: Flow<List<SmsJob>>,
     gatewaySettings: Flow<GatewaySettings>,
     sendSms: suspend (SmsJobRequest) -> SmsDispatchResult,
-    saveGatewaySettings: suspend (String, String) -> Unit,
+    saveGatewaySettings: suspend (String) -> Unit,
     saveEnrollmentKey: suspend (String) -> Unit,
     checkBackend: suspend (GatewaySettings) -> BackendHealthResult
 ) {
@@ -90,7 +90,6 @@ fun SmsGatewayScreen(
     val scope = rememberCoroutineScope()
 
     var serverUrl by remember { mutableStateOf(storedSettings.serverUrl) }
-    var gatewayId by remember { mutableStateOf(storedSettings.gatewayId) }
     var enrollmentKey by remember { mutableStateOf("") }
     var backendMessage by remember { mutableStateOf("Sin probar") }
     var backendConnected by remember { mutableStateOf<Boolean?>(null) }
@@ -112,9 +111,8 @@ fun SmsGatewayScreen(
         )
     }
 
-    LaunchedEffect(storedSettings) {
+    LaunchedEffect(storedSettings.serverUrl) {
         serverUrl = storedSettings.serverUrl
-        gatewayId = storedSettings.gatewayId
     }
 
     val smsPermissionLauncher = rememberLauncherForActivityResult(
@@ -334,7 +332,7 @@ fun SmsGatewayScreen(
             item {
                 ExpandableSectionHeader(
                     title = "Configuración",
-                    subtitle = "Servidor, identidad y enrolamiento",
+                    subtitle = "Servidor y enrolamiento automático",
                     expanded = settingsExpanded,
                     onToggle = {
                         val expand = !settingsExpanded
@@ -350,18 +348,13 @@ fun SmsGatewayScreen(
                 item {
                     BackendConnectionCard(
                         serverUrl = serverUrl,
-                        gatewayId = gatewayId,
+                        gatewayId = storedSettings.gatewayId,
                         enrollmentKey = enrollmentKey,
                         statusMessage = backendMessage,
                         connected = backendConnected,
                         checking = isCheckingBackend,
                         onServerUrlChange = {
                             serverUrl = it
-                            backendConnected = null
-                            backendMessage = "Cambios sin probar"
-                        },
-                        onGatewayIdChange = {
-                            gatewayId = it
                             backendConnected = null
                             backendMessage = "Cambios sin probar"
                         },
@@ -379,21 +372,11 @@ fun SmsGatewayScreen(
                                         val normalizedSettings =
                                             GatewaySettings(
                                                 serverUrl =
-                                                    normalizeServerUrl(serverUrl),
-                                                gatewayId =
-                                                    gatewayId.trim()
+                                                    normalizeServerUrl(serverUrl)
                                             )
 
-                                        require(
-                                            normalizedSettings.gatewayId
-                                                .isNotBlank()
-                                        ) {
-                                            "El identificador del gateway no puede estar vacío"
-                                        }
-
                                         saveGatewaySettings(
-                                            normalizedSettings.serverUrl,
-                                            normalizedSettings.gatewayId
+                                            normalizedSettings.serverUrl
                                         )
 
                                         if (enrollmentKey.isNotBlank()) {
@@ -405,8 +388,6 @@ fun SmsGatewayScreen(
 
                                         serverUrl =
                                             normalizedSettings.serverUrl
-                                        gatewayId =
-                                            normalizedSettings.gatewayId
 
                                         val result =
                                             checkBackend(
@@ -486,7 +467,11 @@ private fun HeaderSection(
             onClick = {},
             label = {
                 Text(
-                    text = gatewayId.take(14),
+                    text =
+                        gatewayId
+                            .takeIf(String::isNotBlank)
+                            ?.take(14)
+                            ?: "Sin registrar",
                     maxLines = 1
                 )
             }
@@ -976,7 +961,6 @@ private fun BackendConnectionCard(
     connected: Boolean?,
     checking: Boolean,
     onServerUrlChange: (String) -> Unit,
-    onGatewayIdChange: (String) -> Unit,
     onEnrollmentKeyChange: (String) -> Unit,
     onSaveAndCheck: () -> Unit
 ) {
@@ -1008,13 +992,34 @@ private fun BackendConnectionCard(
                 singleLine = true
             )
 
-            OutlinedTextField(
-                value = gatewayId,
-                onValueChange = onGatewayIdChange,
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Gateway ID") },
-                singleLine = true
-            )
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Gateway ID",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text =
+                            gatewayId.takeIf(String::isNotBlank)
+                                ?: "Pendiente de registro",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "El backend lo asigna automáticamente. No necesitas escribirlo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             OutlinedTextField(
                 value = enrollmentKey,

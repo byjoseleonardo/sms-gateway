@@ -418,7 +418,8 @@ test("gateway enable state is audited", async () => {
 
   assert.equal(liveStatus?.online, true);
 
-  const audit = await gatewayRegistry.listAudit(10);
+  const audit = (await gatewayRegistry.listAudit(50))
+    .filter(entry => entry.gatewayId === gatewayId);
 
   assert.equal(audit[0]?.action, "GATEWAY_ENABLED");
   assert.equal(audit[1]?.action, "GATEWAY_DISABLED");

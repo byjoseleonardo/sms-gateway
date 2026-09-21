@@ -1,6 +1,6 @@
 {
   "name": "sms-gateway-backend",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,7 @@
     "build": "npm run prisma:generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "check": "npm run prisma:generate && tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/messages/SmsMessageRegistry.test.js dist/clients/ApiClientRegistry.test.js dist/clients/ClientApi.test.js dist/gateways/GatewayRouting.test.js"
+    "test": "npm run build && node --test dist/messages/SmsMessageRegistry.test.js dist/clients/ApiClientRegistry.test.js dist/clients/ClientApi.test.js dist/gateways/GatewayRouting.test.js dist/gateways/GatewayRegistration.test.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

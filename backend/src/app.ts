@@ -15,10 +15,10 @@ import { operatorPageHtml } from "./operator/operatorPage.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.17.0";
+export const APP_VERSION = "0.18.0";
 
 const registrationSchema = z.object({
-  gatewayId: z.string().trim().min(3).max(64),
+  gatewayId: z.string().trim().min(3).max(64).optional(),
   deviceId: z.string().trim().min(3).max(128),
   deviceModel: z.string().trim().min(1).max(128),
   androidVersion: z.string().trim().min(1).max(64),
