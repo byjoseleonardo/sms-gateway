@@ -4,6 +4,9 @@ import type { AppPrismaClient } from "../db/prisma.js";
 export type GatewayRecord = {
   gatewayId: string;
   tokenHash: string;
+  pendingTokenHash: string | null;
+  pendingTokenExpiresAt: string | null;
+  tokenRotatedAt: string | null;
   deviceId: string;
   deviceModel: string;
   androidVersion: string;
@@ -63,6 +66,8 @@ export class GatewayRegistry {
       },
       update: {
         tokenHash,
+        pendingTokenHash: null,
+        pendingTokenExpiresAt: null,
         deviceId: input.deviceId,
         deviceModel: input.deviceModel,
         androidVersion: input.androidVersion,
@@ -90,11 +95,68 @@ export class GatewayRegistry {
 
     if (!gateway || !gateway.enabled) return false;
 
-    const actual = Buffer.from(hashToken(token), "hex");
-    const expected = Buffer.from(gateway.tokenHash, "hex");
+    const suppliedHash = hashToken(token);
 
-    return actual.length === expected.length &&
-      timingSafeEqual(actual, expected);
+    if (safeHashEquals(suppliedHash, gateway.tokenHash)) {
+      return true;
+    }
+
+    const pendingHash = gateway.pendingTokenHash;
+    const pendingExpiresAt = gateway.pendingTokenExpiresAt;
+
+    if (
+      !pendingHash ||
+      !pendingExpiresAt ||
+      pendingExpiresAt.getTime() <= Date.now() ||
+      !safeHashEquals(suppliedHash, pendingHash)
+    ) {
+      return false;
+    }
+
+    const promotedAt = new Date();
+
+    const promoted = await this.prisma.gateway.updateMany({
+      where: {
+        gatewayId,
+        enabled: true,
+        pendingTokenHash: pendingHash,
+        pendingTokenExpiresAt: {
+          gt: promotedAt
+        }
+      },
+      data: {
+        tokenHash: pendingHash,
+        pendingTokenHash: null,
+        pendingTokenExpiresAt: null,
+        tokenRotatedAt: promotedAt,
+        lastSeenAt: promotedAt
+      }
+    });
+
+    if (promoted.count === 1) {
+      await this.prisma.operatorAuditLog.create({
+        data: {
+          id: `audit_${randomUUID()}`,
+          action: "GATEWAY_TOKEN_ROTATED",
+          targetId: gatewayId,
+          gatewayId,
+          note: "El gateway confirmó la credencial nueva"
+        }
+      });
+
+      return true;
+    }
+
+    const latest = await this.prisma.gateway.findUnique({
+      where: {
+        gatewayId
+      }
+    });
+
+    return Boolean(
+      latest?.enabled &&
+      safeHashEquals(suppliedHash, latest.tokenHash)
+    );
   }
 
   async touch(
@@ -149,7 +211,14 @@ export class GatewayRegistry {
           gateway.lastSeenAt?.toISOString() ?? null,
         deviceModel: gateway.deviceModel,
         androidVersion: gateway.androidVersion,
-        appVersion: gateway.appVersion
+        appVersion: gateway.appVersion,
+        tokenRotationPendingUntil:
+          gateway.pendingTokenExpiresAt &&
+          gateway.pendingTokenExpiresAt.getTime() > now
+            ? gateway.pendingTokenExpiresAt.toISOString()
+            : null,
+        tokenRotatedAt:
+          gateway.tokenRotatedAt?.toISOString() ?? null
       };
     });
   }
@@ -199,6 +268,89 @@ export class GatewayRegistry {
     };
   }
 
+  async requestTokenRotation(
+    gatewayId: string,
+    note: string
+  ) {
+    const gateway = await this.prisma.gateway.findUnique({
+      where: {
+        gatewayId
+      }
+    });
+
+    if (!gateway) {
+      return { kind: "not_found" as const };
+    }
+
+    if (!gateway.enabled) {
+      return { kind: "disabled" as const };
+    }
+
+    const token = randomBytes(32).toString("base64url");
+    const pendingTokenHash = hashToken(token);
+    const expiresAt = new Date(
+      Date.now() + TOKEN_ROTATION_TTL_MS
+    );
+
+    await this.prisma.gateway.update({
+      where: {
+        gatewayId
+      },
+      data: {
+        pendingTokenHash,
+        pendingTokenExpiresAt: expiresAt
+      }
+    });
+
+    await this.prisma.operatorAuditLog.create({
+      data: {
+        id: `audit_${randomUUID()}`,
+        action: "GATEWAY_TOKEN_ROTATION_REQUESTED",
+        targetId: gatewayId,
+        gatewayId,
+        note: note.trim()
+      }
+    });
+
+    return {
+      kind: "pending" as const,
+      token,
+      expiresAt: expiresAt.toISOString()
+    };
+  }
+
+  async cancelTokenRotation(
+    gatewayId: string,
+    reason: string
+  ) {
+    const cleared = await this.prisma.gateway.updateMany({
+      where: {
+        gatewayId,
+        pendingTokenHash: {
+          not: null
+        }
+      },
+      data: {
+        pendingTokenHash: null,
+        pendingTokenExpiresAt: null
+      }
+    });
+
+    if (cleared.count === 1) {
+      await this.prisma.operatorAuditLog.create({
+        data: {
+          id: `audit_${randomUUID()}`,
+          action: "GATEWAY_TOKEN_ROTATION_CANCELLED",
+          targetId: gatewayId,
+          gatewayId,
+          note: reason.trim()
+        }
+      });
+    }
+
+    return cleared.count === 1;
+  }
+
   async listAudit(limit = 50) {
     const safeLimit = Math.min(Math.max(limit, 1), 200);
 
@@ -241,6 +393,8 @@ function toGatewayStatus(gateway: {
   deviceModel: string;
   androidVersion: string;
   appVersion: string;
+  pendingTokenExpiresAt?: Date | null;
+  tokenRotatedAt?: Date | null;
 }) {
   const lastSeenMs = gateway.lastSeenAt?.getTime() ?? 0;
 
@@ -254,13 +408,23 @@ function toGatewayStatus(gateway: {
     lastSeenAt: gateway.lastSeenAt?.toISOString() ?? null,
     deviceModel: gateway.deviceModel,
     androidVersion: gateway.androidVersion,
-    appVersion: gateway.appVersion
+    appVersion: gateway.appVersion,
+    tokenRotationPendingUntil:
+      gateway.pendingTokenExpiresAt &&
+      gateway.pendingTokenExpiresAt.getTime() > Date.now()
+        ? gateway.pendingTokenExpiresAt.toISOString()
+        : null,
+    tokenRotatedAt:
+      gateway.tokenRotatedAt?.toISOString() ?? null
   };
 }
 
 function toGatewayRecord(gateway: {
   gatewayId: string;
   tokenHash: string;
+  pendingTokenHash: string | null;
+  pendingTokenExpiresAt: Date | null;
+  tokenRotatedAt: Date | null;
   deviceId: string;
   deviceModel: string;
   androidVersion: string;
@@ -273,6 +437,11 @@ function toGatewayRecord(gateway: {
   return {
     gatewayId: gateway.gatewayId,
     tokenHash: gateway.tokenHash,
+    pendingTokenHash: gateway.pendingTokenHash,
+    pendingTokenExpiresAt:
+      gateway.pendingTokenExpiresAt?.toISOString() ?? null,
+    tokenRotatedAt:
+      gateway.tokenRotatedAt?.toISOString() ?? null,
     deviceId: gateway.deviceId,
     deviceModel: gateway.deviceModel,
     androidVersion: gateway.androidVersion,
@@ -284,8 +453,21 @@ function toGatewayRecord(gateway: {
   };
 }
 
+const TOKEN_ROTATION_TTL_MS = 5 * 60 * 1_000;
+
 function hashToken(token: string) {
   return createHash("sha256")
     .update(token, "utf8")
     .digest("hex");
+}
+
+function safeHashEquals(
+  suppliedHash: string,
+  expectedHash: string
+) {
+  const supplied = Buffer.from(suppliedHash, "hex");
+  const expected = Buffer.from(expectedHash, "hex");
+
+  return supplied.length === expected.length &&
+    timingSafeEqual(supplied, expected);
 }

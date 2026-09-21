@@ -13,6 +13,10 @@ class GatewaySocketClient(
     private val onDisconnected: (String) -> Unit,
     private val onServerReady: (String) -> Unit,
     private val onSmsAvailable: (String) -> Unit,
+    private val onTokenRotationRequested: (
+        token: String,
+        expiresAt: String?
+    ) -> Unit,
     private val onError: (String) -> Unit
 ) {
     private val socket: Socket
@@ -74,6 +78,22 @@ class GatewaySocketClient(
                 ?: return@on
 
             onSmsAvailable(jobId)
+        }
+
+        socket.on("gateway.tokenRotationRequested") { args ->
+            val payload = args.firstOrNull() as? JSONObject
+            val token = payload?.optString("token")
+                ?.takeIf(String::isNotBlank)
+                ?: return@on
+
+            val expiresAt = payload
+                .optString("expiresAt")
+                .takeIf(String::isNotBlank)
+
+            onTokenRotationRequested(
+                token,
+                expiresAt
+            )
         }
     }
 

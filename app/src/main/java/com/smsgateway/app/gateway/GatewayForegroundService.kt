@@ -23,11 +23,11 @@ import com.smsgateway.app.network.GatewayRegistrationRepository
 import com.smsgateway.app.network.RemoteSmsJobRepository
 import com.smsgateway.app.network.RemoteSmsStatus
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -93,11 +93,13 @@ class GatewayForegroundService : Service() {
             while (isActive) {
                 try {
                     bootstrapConnection(application)
+                    cleanupSocketConnection()
                     retryDelayMs = INITIAL_RETRY_DELAY_MS
 
-                    // Keep this job alive so repeated START intents cannot
-                    // create duplicate Socket.IO clients.
-                    awaitCancellation()
+                    GatewayServiceState.setConnection(
+                        GatewayConnectionPhase.RECONNECTING,
+                        "Credencial actualizada · reconectando"
+                    )
                 } catch (exception: CancellationException) {
                     throw exception
                 } catch (exception: Exception) {
@@ -158,6 +160,9 @@ class GatewayForegroundService : Service() {
             "Conectando con Socket.IO…"
         )
 
+        val tokenRotationCompleted =
+            CompletableDeferred<Unit>()
+
         val client = GatewaySocketClient(
             settings = registeredSettings,
             onConnected = {
@@ -184,6 +189,41 @@ class GatewayForegroundService : Service() {
                     processRemoteJob(jobId)
                 }
             },
+            onTokenRotationRequested = { token, expiresAt ->
+                serviceScope.launch {
+                    try {
+                        val expired =
+                            expiresAt
+                                ?.let(::parseRemoteTimestamp)
+                                ?.let { it <= System.currentTimeMillis() }
+                                ?: false
+
+                        if (expired) {
+                            Log.w(
+                                TAG,
+                                "Ignoring expired gateway token rotation"
+                            )
+                            return@launch
+                        }
+
+                        application.gatewaySettingsStore
+                            .saveToken(token)
+
+                        Log.i(
+                            TAG,
+                            "Gateway credential rotation stored securely"
+                        )
+
+                        tokenRotationCompleted.complete(Unit)
+                    } catch (exception: Exception) {
+                        Log.e(
+                            TAG,
+                            "Gateway credential rotation could not be stored",
+                            exception
+                        )
+                    }
+                }
+            },
             onError = { error ->
                 GatewayServiceState.setConnection(
                     GatewayConnectionPhase.RECONNECTING,
@@ -206,6 +246,8 @@ class GatewayForegroundService : Service() {
                 }
             }
         }
+
+        tokenRotationCompleted.await()
     }
 
     private suspend fun processRemoteJob(jobId: String) {

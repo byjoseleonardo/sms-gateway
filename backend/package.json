@@ -1,6 +1,6 @@
 {
   "name": "sms-gateway-backend",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "db:deploy": "prisma migrate deploy --config prisma7.config.ts",
     "db:studio": "prisma studio --config prisma7.config.ts",
     "db:import-json": "tsx scripts/import-json.ts",
+    "secrets:rotate": "tsx scripts/rotate-local-secrets.ts",
     "build": "npm run prisma:generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "check": "npm run prisma:generate && tsc -p tsconfig.json --noEmit",

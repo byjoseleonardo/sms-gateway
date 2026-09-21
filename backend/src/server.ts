@@ -29,6 +29,24 @@ const app = createApp(
       { jobId }
     );
   },
+  async (gatewayId, token, expiresAt) => {
+    const room = `gateway:${gatewayId}`;
+    const sockets = await io.in(room).fetchSockets();
+
+    if (sockets.length === 0) {
+      return false;
+    }
+
+    io.to(room).emit(
+      "gateway.tokenRotationRequested",
+      {
+        token,
+        expiresAt
+      }
+    );
+
+    return true;
+  },
   env.OPERATOR_API_KEY,
   env.GATEWAY_ENROLLMENT_KEY
 );

@@ -425,3 +425,149 @@ test("gateway enable state is audited", async () => {
   assert.equal(audit[1]?.gatewayId, gatewayId);
   assert.equal(audit[1]?.note, "maintenance test");
 });
+
+
+test("gateway token rotation promotes the new token and revokes the old token", async () => {
+  const rotationGatewayId = `GW-ROTATE-${suffix}`;
+
+  try {
+    const registered = await gatewayRegistry.register({
+      gatewayId: rotationGatewayId,
+      deviceId: `rotate-device-${suffix}`,
+      deviceModel: "Rotation Test",
+      androidVersion: "test",
+      appVersion: "test"
+    });
+
+    const rotation =
+      await gatewayRegistry.requestTokenRotation(
+        rotationGatewayId,
+        "rotation test"
+      );
+
+    assert.equal(rotation.kind, "pending");
+
+    if (rotation.kind !== "pending") {
+      return;
+    }
+
+    assert.equal(
+      await gatewayRegistry.authenticate(
+        rotationGatewayId,
+        registered.token
+      ),
+      true
+    );
+
+    assert.equal(
+      await gatewayRegistry.authenticate(
+        rotationGatewayId,
+        rotation.token
+      ),
+      true
+    );
+
+    assert.equal(
+      await gatewayRegistry.authenticate(
+        rotationGatewayId,
+        registered.token
+      ),
+      false
+    );
+
+    const status = await gatewayRegistry.getStatus(
+      rotationGatewayId
+    );
+
+    assert.equal(
+      status?.tokenRotationPendingUntil,
+      null
+    );
+    assert.ok(status?.tokenRotatedAt);
+
+    const audit = await gatewayRegistry.listAudit(20);
+
+    assert.equal(
+      audit.some(
+        entry =>
+          entry.gatewayId === rotationGatewayId &&
+          entry.action === "GATEWAY_TOKEN_ROTATED"
+      ),
+      true
+    );
+  } finally {
+    await prisma.operatorAuditLog.deleteMany({
+      where: {
+        gatewayId: rotationGatewayId
+      }
+    });
+
+    await prisma.gateway.deleteMany({
+      where: {
+        gatewayId: rotationGatewayId
+      }
+    });
+  }
+});
+
+test("cancelled token rotation keeps the current token valid", async () => {
+  const rotationGatewayId = `GW-CANCEL-ROTATE-${suffix}`;
+
+  try {
+    const registered = await gatewayRegistry.register({
+      gatewayId: rotationGatewayId,
+      deviceId: `cancel-rotate-device-${suffix}`,
+      deviceModel: "Rotation Cancel Test",
+      androidVersion: "test",
+      appVersion: "test"
+    });
+
+    const rotation =
+      await gatewayRegistry.requestTokenRotation(
+        rotationGatewayId,
+        "cancel rotation test"
+      );
+
+    assert.equal(rotation.kind, "pending");
+
+    if (rotation.kind !== "pending") {
+      return;
+    }
+
+    assert.equal(
+      await gatewayRegistry.cancelTokenRotation(
+        rotationGatewayId,
+        "test cancellation"
+      ),
+      true
+    );
+
+    assert.equal(
+      await gatewayRegistry.authenticate(
+        rotationGatewayId,
+        rotation.token
+      ),
+      false
+    );
+
+    assert.equal(
+      await gatewayRegistry.authenticate(
+        rotationGatewayId,
+        registered.token
+      ),
+      true
+    );
+  } finally {
+    await prisma.operatorAuditLog.deleteMany({
+      where: {
+        gatewayId: rotationGatewayId
+      }
+    });
+
+    await prisma.gateway.deleteMany({
+      where: {
+        gatewayId: rotationGatewayId
+      }
+    });
+  }
+});

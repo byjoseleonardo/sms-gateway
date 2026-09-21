@@ -10,7 +10,7 @@ import { operatorPageHtml } from "./operator/operatorPage.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.14.0";
+export const APP_VERSION = "0.15.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -63,6 +63,10 @@ const gatewayControlSchema = z.object({
   note: z.string().trim().min(3).max(500)
 });
 
+const gatewayTokenRotationSchema = z.object({
+  note: z.string().trim().min(3).max(500)
+});
+
 const resolveAmbiguousSchema = z.object({
   status: z.enum(["SENT", "DELIVERED", "FAILED"]),
   note: z.string().trim().min(3).max(500)
@@ -72,6 +76,11 @@ export function createApp(
   gatewayRegistry: GatewayRegistry,
   messageRegistry: SmsMessageRegistry,
   onMessageAvailable: (gatewayId: string, jobId: string) => void,
+  onGatewayTokenRotation: (
+    gatewayId: string,
+    token: string,
+    expiresAt: string
+  ) => Promise<boolean>,
   operatorApiKey: string,
   gatewayEnrollmentKey: string
 ) {
@@ -225,6 +234,67 @@ export function createApp(
       res.json({
         status: "ok",
         gateway: result.gateway
+      });
+    }
+  );
+
+  app.post(
+    "/api/v1/gateways/:gatewayId/rotate-token",
+    operatorAuth,
+    async (req, res) => {
+      const parsed = gatewayTokenRotationSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_gateway_token_rotation_payload",
+          details: parsed.error.flatten()
+        });
+        return;
+      }
+
+      const gatewayId = req.params.gatewayId as string;
+      const rotation =
+        await gatewayRegistry.requestTokenRotation(
+          gatewayId,
+          parsed.data.note
+        );
+
+      if (rotation.kind === "not_found") {
+        res.status(404).json({
+          error: "gateway_not_found"
+        });
+        return;
+      }
+
+      if (rotation.kind === "disabled") {
+        res.status(409).json({
+          error: "gateway_disabled"
+        });
+        return;
+      }
+
+      const delivered = await onGatewayTokenRotation(
+        gatewayId,
+        rotation.token,
+        rotation.expiresAt
+      );
+
+      if (!delivered) {
+        await gatewayRegistry.cancelTokenRotation(
+          gatewayId,
+          "Rotación cancelada: no había un socket autenticado disponible"
+        );
+
+        res.status(409).json({
+          error: "gateway_not_connected"
+        });
+        return;
+      }
+
+      res.status(202).json({
+        status: "pending_confirmation",
+        gatewayId,
+        expiresAt: rotation.expiresAt
       });
     }
   );

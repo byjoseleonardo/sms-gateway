@@ -799,10 +799,22 @@ export function operatorPageHtml(version: string) {
             '<div><div class="gateway-name">' + escapeText(g.gatewayId) + '</div>' +
             '<div class="gateway-meta">' + escapeText(g.deviceModel) + ' · Android ' +
               escapeText(g.androidVersion) + ' · app ' + escapeText(g.appVersion) + '</div>' +
-            '<div class="gateway-meta">Último heartbeat: ' + escapeText(fmt(g.lastSeenAt)) + '</div></div>' +
+            '<div class="gateway-meta">Último heartbeat: ' + escapeText(fmt(g.lastSeenAt)) + '</div>' +
+            (g.tokenRotatedAt
+              ? '<div class="gateway-meta">Token rotado: ' + escapeText(fmt(g.tokenRotatedAt)) + '</div>'
+              : '') +
+            (g.tokenRotationPendingUntil
+              ? '<div class="gateway-meta" style="color:#ffe2a3">Rotación pendiente hasta ' +
+                  escapeText(fmt(g.tokenRotationPendingUntil)) + '</div>'
+              : '') +
+            '</div>' +
             '<div class="gateway-actions">' +
               '<span class="status-line"><span class="dot ' +
                 (g.online ? 'ok' : 'bad') + '"></span>' + stateLabel + '</span>' +
+              (g.enabled && g.online
+                ? '<button class="btn gateway-rotate-token" data-gateway-id="' +
+                    escapeText(g.gatewayId) + '">Rotar token</button>'
+                : '') +
               '<button class="btn gateway-toggle" data-gateway-id="' +
                 escapeText(g.gatewayId) + '" data-enabled="' +
                 String(g.enabled) + '">' + buttonLabel + '</button>' +
@@ -815,6 +827,14 @@ export function operatorPageHtml(version: string) {
             toggleGateway(
               button.getAttribute("data-gateway-id"),
               button.getAttribute("data-enabled") === "true"
+            );
+          });
+        });
+
+        document.querySelectorAll(".gateway-rotate-token").forEach(function (button) {
+          button.addEventListener("click", function () {
+            rotateGatewayToken(
+              button.getAttribute("data-gateway-id")
             );
           });
         });
@@ -1024,6 +1044,53 @@ export function operatorPageHtml(version: string) {
           await refresh();
         } catch (error) {
           toast("No se pudo actualizar el gateway: " + error.message, true);
+        }
+      }
+
+      async function rotateGatewayToken(gatewayId) {
+        var note = window.prompt(
+          "Motivo para rotar la credencial de " + gatewayId + ":"
+        );
+
+        if (note == null) return;
+        note = note.trim();
+
+        if (note.length < 3) {
+          toast("La nota debe tener al menos 3 caracteres.", true);
+          return;
+        }
+
+        if (!window.confirm(
+          "¿Confirmas rotar el token de " + gatewayId +
+          "? El A03 recibirá la credencial nueva por su socket autenticado y reconectará automáticamente."
+        )) {
+          return;
+        }
+
+        try {
+          var result = await api(
+            "/api/v1/gateways/" +
+              encodeURIComponent(gatewayId) +
+              "/rotate-token",
+            {
+              method: "POST",
+              body: JSON.stringify({
+                note: note
+              })
+            }
+          );
+
+          toast(
+            "Rotación enviada. Esperando confirmación del gateway hasta " +
+            fmt(result.expiresAt) + "."
+          );
+
+          window.setTimeout(refresh, 1500);
+        } catch (error) {
+          toast(
+            "No se pudo iniciar la rotación: " + error.message,
+            true
+          );
         }
       }
 
