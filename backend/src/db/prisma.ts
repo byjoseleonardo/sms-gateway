@@ -11,8 +11,27 @@ export function databaseUrl() {
 export function createPrismaClient(
   connectionString = databaseUrl()
 ) {
+  const isSeenodeDatabase =
+    (() => {
+      try {
+        return new URL(connectionString).hostname
+          .endsWith(".db.run-on-seenode.com");
+      } catch {
+        return false;
+      }
+    })();
+
   const adapter = new PrismaPg(
-    { connectionString },
+    {
+      connectionString,
+      ...(isSeenodeDatabase
+        ? {
+            ssl: {
+              rejectUnauthorized: false
+            }
+          }
+        : {})
+    },
     { schema: "public" }
   );
 
