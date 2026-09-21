@@ -223,6 +223,33 @@ export class GatewayRegistry {
     });
   }
 
+  async selectAvailableGateway() {
+    const cutoff = new Date(
+      Date.now() - 45_000
+    );
+
+    const gateway = await this.prisma.gateway.findFirst({
+      where: {
+        enabled: true,
+        lastSeenAt: {
+          gte: cutoff
+        }
+      },
+      orderBy: [
+        {
+          lastSeenAt: "desc"
+        },
+        {
+          gatewayId: "asc"
+        }
+      ]
+    });
+
+    return gateway
+      ? toGatewayStatus(gateway)
+      : null;
+  }
+
   async setEnabled(
     gatewayId: string,
     enabled: boolean,

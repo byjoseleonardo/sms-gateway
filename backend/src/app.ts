@@ -4,13 +4,18 @@ import {
   GatewayRegistrationConflictError,
   type GatewayRegistry
 } from "./gateways/GatewayRegistry.js";
+import {
+  type ApiClientRegistry,
+  type AuthenticatedApiClient
+} from "./clients/ApiClientRegistry.js";
+import { apiClientAuth } from "./clients/apiClientAuth.js";
 import { gatewayAuth } from "./gateways/gatewayAuth.js";
 import type { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
 import { operatorPageHtml } from "./operator/operatorPage.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.15.0";
+export const APP_VERSION = "0.16.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -38,6 +43,7 @@ const updateMessageStatusSchema = z.object({
 
 const listMessagesQuerySchema = z.object({
   gatewayId: z.string().trim().min(3).max(64).optional(),
+  clientId: z.string().trim().min(3).max(64).optional(),
   status: z.enum([
     "QUEUED",
     "CLAIMED",
@@ -51,7 +57,8 @@ const listMessagesQuerySchema = z.object({
 });
 
 const metricsQuerySchema = z.object({
-  gatewayId: z.string().trim().min(3).max(64).optional()
+  gatewayId: z.string().trim().min(3).max(64).optional(),
+  clientId: z.string().trim().min(3).max(64).optional()
 });
 
 const auditQuerySchema = z.object({
@@ -72,8 +79,51 @@ const resolveAmbiguousSchema = z.object({
   note: z.string().trim().min(3).max(500)
 });
 
+const createApiClientSchema = z.object({
+  name: z.string().trim().min(2).max(128),
+  description: z.string().trim().max(500).optional(),
+  scopes: z.array(
+    z.enum(["sms:send", "sms:read"])
+  ).min(1).default(["sms:send", "sms:read"]),
+  rateLimitPerMinute:
+    z.coerce.number().int().min(1).max(1000).default(60),
+  monthlyQuota:
+    z.coerce.number().int().min(1).max(1_000_000)
+      .nullable()
+      .optional()
+});
+
+const apiClientControlSchema = z.object({
+  enabled: z.boolean(),
+  note: z.string().trim().min(3).max(500)
+});
+
+const apiClientLimitsSchema = z.object({
+  scopes: z.array(
+    z.enum(["sms:send", "sms:read"])
+  ).min(1),
+  rateLimitPerMinute:
+    z.coerce.number().int().min(1).max(1000),
+  monthlyQuota:
+    z.coerce.number().int().min(1).max(1_000_000)
+      .nullable(),
+  note: z.string().trim().min(3).max(500)
+});
+
+const apiClientRotateSchema = z.object({
+  note: z.string().trim().min(3).max(500)
+});
+
+const clientEnqueueMessageSchema = z.object({
+  idempotencyKey: z.string().trim().min(8).max(128),
+  gatewayId: z.string().trim().min(3).max(64).optional(),
+  destination: z.string().trim().regex(/^\+[1-9]\d{7,14}$/),
+  message: z.string().min(1).max(160)
+});
+
 export function createApp(
   gatewayRegistry: GatewayRegistry,
+  apiClientRegistry: ApiClientRegistry,
   messageRegistry: SmsMessageRegistry,
   onMessageAvailable: (gatewayId: string, jobId: string) => void,
   onGatewayTokenRotation: (
@@ -91,6 +141,11 @@ export function createApp(
 
   const operatorAuth = operatorApiKeyAuth(operatorApiKey);
   const enrollmentAuth = gatewayEnrollmentAuth(gatewayEnrollmentKey);
+
+  const clientSendAuth =
+    apiClientAuth(apiClientRegistry, "sms:send");
+  const clientReadAuth =
+    apiClientAuth(apiClientRegistry, "sms:read");
 
   app.get("/operator", (_req, res) => {
     res
@@ -299,6 +354,161 @@ export function createApp(
     }
   );
 
+  app.get("/api/v1/clients", operatorAuth, async (_req, res) => {
+    res.json({
+      clients: await apiClientRegistry.list()
+    });
+  });
+
+  app.post("/api/v1/clients", operatorAuth, async (req, res) => {
+    const parsed = createApiClientSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "invalid_api_client_payload",
+        details: parsed.error.flatten()
+      });
+      return;
+    }
+
+    const result = await apiClientRegistry.create({
+      name: parsed.data.name,
+      description: parsed.data.description,
+      scopes: parsed.data.scopes,
+      rateLimitPerMinute:
+        parsed.data.rateLimitPerMinute,
+      monthlyQuota:
+        parsed.data.monthlyQuota ?? null
+    });
+
+    res.set("Cache-Control", "no-store");
+    res.status(201).json({
+      client: result.client,
+      apiKey: result.apiKey
+    });
+  });
+
+  app.patch(
+    "/api/v1/clients/:clientId",
+    operatorAuth,
+    async (req, res) => {
+      const parsed = apiClientControlSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_api_client_control_payload",
+          details: parsed.error.flatten()
+        });
+        return;
+      }
+
+      const result = await apiClientRegistry.setEnabled(
+        req.params.clientId as string,
+        parsed.data.enabled,
+        parsed.data.note
+      );
+
+      if (result.kind === "not_found") {
+        res.status(404).json({
+          error: "api_client_not_found"
+        });
+        return;
+      }
+
+      res.json({
+        status: "ok",
+        client: result.client
+      });
+    }
+  );
+
+  app.patch(
+    "/api/v1/clients/:clientId/limits",
+    operatorAuth,
+    async (req, res) => {
+      const parsed = apiClientLimitsSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_api_client_limits_payload",
+          details: parsed.error.flatten()
+        });
+        return;
+      }
+
+      const result = await apiClientRegistry.updateLimits(
+        req.params.clientId as string,
+        parsed.data
+      );
+
+      if (result.kind === "not_found") {
+        res.status(404).json({
+          error: "api_client_not_found"
+        });
+        return;
+      }
+
+      res.json({
+        status: "ok",
+        client: result.client
+      });
+    }
+  );
+
+  app.post(
+    "/api/v1/clients/:clientId/rotate-key",
+    operatorAuth,
+    async (req, res) => {
+      const parsed = apiClientRotateSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_api_client_rotation_payload",
+          details: parsed.error.flatten()
+        });
+        return;
+      }
+
+      const result = await apiClientRegistry.rotateKey(
+        req.params.clientId as string,
+        parsed.data.note
+      );
+
+      if (result.kind === "not_found") {
+        res.status(404).json({
+          error: "api_client_not_found"
+        });
+        return;
+      }
+
+      res.set("Cache-Control", "no-store");
+      res.json({
+        status: "ok",
+        client: result.client,
+        apiKey: result.apiKey
+      });
+    }
+  );
+
+  app.get(
+    "/api/v1/clients/:clientId/metrics",
+    operatorAuth,
+    async (req, res) => {
+      const metrics = await apiClientRegistry.metrics(
+        req.params.clientId as string
+      );
+
+      if (!metrics) {
+        res.status(404).json({
+          error: "api_client_not_found"
+        });
+        return;
+      }
+
+      res.json(metrics);
+    }
+  );
+
   app.get("/api/v1/audit", operatorAuth, async (req, res) => {
     const parsed = auditQuerySchema.safeParse(req.query);
 
@@ -330,7 +540,8 @@ export function createApp(
 
     res.json(
       await messageRegistry.metrics(
-        parsed.data.gatewayId
+        parsed.data.gatewayId,
+        parsed.data.clientId
       )
     );
   });
@@ -460,6 +671,158 @@ export function createApp(
         status: "ok",
         message: result.message
       });
+    }
+  );
+
+  app.post(
+    "/api/v1/client/messages",
+    clientSendAuth,
+    async (req, res) => {
+      const parsed = clientEnqueueMessageSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_message_payload",
+          details: parsed.error.flatten()
+        });
+        return;
+      }
+
+      const client =
+        res.locals.apiClient as AuthenticatedApiClient;
+
+      const existing =
+        await messageRegistry.getByIdempotency(
+          client.id,
+          parsed.data.idempotencyKey
+        );
+
+      if (existing) {
+        res.status(200).json({
+          created: false,
+          message: existing
+        });
+        return;
+      }
+
+      const allowance =
+        await apiClientRegistry.checkSendAllowance(
+          client.id
+        );
+
+      if (allowance.kind === "disabled") {
+        res.status(403).json({
+          error: "api_client_disabled"
+        });
+        return;
+      }
+
+      if (allowance.kind === "rate_limited") {
+        res.status(429).json({
+          error: "rate_limit_exceeded",
+          limitPerMinute: allowance.limit
+        });
+        return;
+      }
+
+      if (
+        allowance.kind ===
+          "monthly_quota_exceeded"
+      ) {
+        res.status(429).json({
+          error: "monthly_quota_exceeded",
+          quota: allowance.quota,
+          usage: allowance.usage
+        });
+        return;
+      }
+
+      const gateway =
+        parsed.data.gatewayId
+          ? await gatewayRegistry.getStatus(
+              parsed.data.gatewayId
+            )
+          : await gatewayRegistry.selectAvailableGateway();
+
+      if (
+        !gateway ||
+        !gateway.enabled ||
+        !gateway.online
+      ) {
+        res.status(503).json({
+          error: "no_gateway_available"
+        });
+        return;
+      }
+
+      const result = await messageRegistry.enqueue({
+        sourceId: client.id,
+        clientId: client.id,
+        idempotencyKey:
+          parsed.data.idempotencyKey,
+        gatewayId: gateway.gatewayId,
+        destination: parsed.data.destination,
+        message: parsed.data.message
+      });
+
+      if (
+        result.message.status === "QUEUED" ||
+        result.message.status === "CLAIMED"
+      ) {
+        onMessageAvailable(
+          result.message.gatewayId,
+          result.message.id
+        );
+      }
+
+      res.status(result.created ? 201 : 200).json({
+        created: result.created,
+        message: result.message
+      });
+    }
+  );
+
+  app.get(
+    "/api/v1/client/messages/:jobId",
+    clientReadAuth,
+    async (req, res) => {
+      const client =
+        res.locals.apiClient as AuthenticatedApiClient;
+
+      const message = await messageRegistry.get(
+        req.params.jobId as string
+      );
+
+      if (!message) {
+        res.status(404).json({
+          error: "message_not_found"
+        });
+        return;
+      }
+
+      if (message.clientId !== client.id) {
+        res.status(404).json({
+          error: "message_not_found"
+        });
+        return;
+      }
+
+      res.json(message);
+    }
+  );
+
+  app.get(
+    "/api/v1/client/usage",
+    clientReadAuth,
+    async (_req, res) => {
+      const client =
+        res.locals.apiClient as AuthenticatedApiClient;
+
+      const metrics = await apiClientRegistry.metrics(
+        client.id
+      );
+
+      res.json(metrics);
     }
   );
 

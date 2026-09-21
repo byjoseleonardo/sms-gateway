@@ -39,7 +39,9 @@ model Gateway {
 
 model SmsMessage {
   id             String           @id @db.VarChar(64)
-  idempotencyKey String           @unique @map("idempotency_key") @db.VarChar(128)
+  sourceId       String           @default("operator") @map("source_id") @db.VarChar(64)
+  idempotencyKey String           @map("idempotency_key") @db.VarChar(128)
+  clientId       String?          @map("client_id") @db.VarChar(64)
   gatewayId      String           @map("gateway_id") @db.VarChar(64)
   destination    String           @db.VarChar(32)
   message        String           @db.VarChar(160)
@@ -54,9 +56,32 @@ model SmsMessage {
   operatorResolvedAt     DateTime?        @map("operator_resolved_at")
   operatorResolutionNote String?          @map("operator_resolution_note") @db.VarChar(500)
   gateway                Gateway          @relation(fields: [gatewayId], references: [gatewayId], onDelete: Restrict)
+  client                 ApiClient?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
 
+  @@unique([sourceId, idempotencyKey])
   @@index([gatewayId, status, createdAt])
+  @@index([clientId, status, createdAt])
   @@map("sms_messages")
+}
+
+model ApiClient {
+  id                 String       @id @db.VarChar(64)
+  keyId              String       @unique @map("key_id") @db.VarChar(24)
+  keyHash            String       @map("key_hash") @db.VarChar(64)
+  name               String       @db.VarChar(128)
+  description        String?      @db.VarChar(500)
+  enabled            Boolean      @default(true)
+  scopes             String[]     @default(["sms:send", "sms:read"])
+  rateLimitPerMinute Int          @default(60) @map("rate_limit_per_minute")
+  monthlyQuota       Int?         @map("monthly_quota")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+  lastUsedAt         DateTime?    @map("last_used_at")
+  keyRotatedAt       DateTime?    @map("key_rotated_at")
+  messages           SmsMessage[]
+
+  @@index([enabled, lastUsedAt])
+  @@map("api_clients")
 }
 
 

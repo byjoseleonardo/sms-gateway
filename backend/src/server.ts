@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { Server as SocketIoServer } from "socket.io";
 import { z } from "zod";
 import { APP_VERSION, createApp } from "./app.js";
+import { ApiClientRegistry } from "./clients/ApiClientRegistry.js";
 import { createPrismaClient } from "./db/prisma.js";
 import { GatewayRegistry } from "./gateways/GatewayRegistry.js";
 import { SmsMessageRegistry } from "./messages/SmsMessageRegistry.js";
@@ -16,12 +17,14 @@ const envSchema = z.object({
 const env = envSchema.parse(process.env);
 const prisma = createPrismaClient();
 const gatewayRegistry = new GatewayRegistry(prisma);
+const apiClientRegistry = new ApiClientRegistry(prisma);
 const messageRegistry = new SmsMessageRegistry(prisma);
 
 let io: SocketIoServer;
 
 const app = createApp(
   gatewayRegistry,
+  apiClientRegistry,
   messageRegistry,
   (gatewayId, jobId) => {
     io.to(`gateway:${gatewayId}`).emit(

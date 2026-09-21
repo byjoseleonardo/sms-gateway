@@ -272,7 +272,7 @@ export function operatorPageHtml(version: string) {
 
     .filters {
       display: grid;
-      grid-template-columns: minmax(170px, 1fr) minmax(160px, 220px) 120px auto;
+      grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr) minmax(150px, 210px) 120px auto;
       gap: 10px;
       padding: 14px;
       border-bottom: 1px solid var(--line);
@@ -343,6 +343,97 @@ export function operatorPageHtml(version: string) {
     .badge.AMBIGUOUS { color: #ffe2a3; border-color: rgba(248,202,117,.5); }
     .badge.CLAIMED { color: #d8c9ff; border-color: rgba(185,156,255,.4); }
     .badge.QUEUED { color: #d4e1ed; }
+
+    .clients-panel {
+      padding: 18px;
+      margin-bottom: 18px;
+    }
+
+    .clients-header {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .client-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .client-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(7,16,25,.44);
+      min-width: 0;
+    }
+
+    .client-card.disabled {
+      opacity: .68;
+    }
+
+    .client-title-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+
+    .client-name {
+      font-weight: 850;
+      overflow-wrap: anywhere;
+    }
+
+    .client-metric {
+      margin-top: 12px;
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+    }
+
+    .client-metric strong {
+      font-size: 1.45rem;
+      letter-spacing: -.04em;
+    }
+
+    .client-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .scope-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 8px;
+    }
+
+    .scope-chip {
+      border: 1px solid #36516a;
+      border-radius: 999px;
+      padding: 3px 7px;
+      font-size: .7rem;
+      color: #bdd0df;
+      background: #0d1b28;
+    }
+
+    .secret-box {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px dashed #4f7997;
+      background: #07121c;
+      color: #bce9ff;
+      word-break: break-all;
+      user-select: all;
+      margin: 12px 0;
+    }
 
     .gateway-list {
       display: grid;
@@ -485,6 +576,7 @@ export function operatorPageHtml(version: string) {
       .grid { grid-template-columns: 1fr; }
       .compose { position: static; }
       .stats { grid-template-columns: repeat(2, 1fr); }
+      .client-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
     @media (max-width: 620px) {
@@ -494,6 +586,8 @@ export function operatorPageHtml(version: string) {
       .stats { grid-template-columns: 1fr 1fr; }
       .filters { grid-template-columns: 1fr; }
       .dialog-actions { grid-template-columns: 1fr; }
+      .client-grid { grid-template-columns: 1fr; }
+      .clients-header { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
@@ -542,6 +636,19 @@ export function operatorPageHtml(version: string) {
       </article>
     </section>
 
+    <section class="panel clients-panel">
+      <div class="clients-header">
+        <div>
+          <h2 class="section-title">API Clients</h2>
+          <p class="section-copy" style="margin:4px 0 0">Credenciales independientes para sistemas externos y consumo mensual atribuido.</p>
+        </div>
+        <button id="createClientBtn" class="btn primary">+ Crear API Client</button>
+      </div>
+      <div id="clientGrid" class="client-grid">
+        <div class="empty">Conecta el panel para cargar clientes.</div>
+      </div>
+    </section>
+
     <section class="grid">
       <aside class="panel compose">
         <h2 class="section-title">Nuevo SMS</h2>
@@ -579,6 +686,10 @@ export function operatorPageHtml(version: string) {
             <option value="">Todos los gateways</option>
           </select>
 
+          <select id="clientFilter">
+            <option value="">Todos los clientes</option>
+          </select>
+
           <select id="statusFilter">
             <option value="">Todos los estados</option>
             <option>QUEUED</option>
@@ -606,13 +717,14 @@ export function operatorPageHtml(version: string) {
                 <th>Estado</th>
                 <th>Destino / mensaje</th>
                 <th>Gateway</th>
+                <th>Origen</th>
                 <th>Intentos</th>
                 <th>Creado</th>
                 <th>Acción</th>
               </tr>
             </thead>
             <tbody id="messageRows">
-              <tr><td colspan="6" class="empty">Introduce la API key del operador.</td></tr>
+              <tr><td colspan="7" class="empty">Introduce la API key del operador.</td></tr>
             </tbody>
           </table>
         </div>
@@ -624,6 +736,61 @@ export function operatorPageHtml(version: string) {
       </section>
     </section>
   </main>
+
+  <dialog id="createClientDialog">
+    <div class="dialog-body">
+      <h2 class="section-title">Crear API Client</h2>
+      <p class="section-copy">La API key se mostrará una sola vez después de crear el cliente.</p>
+
+      <form id="createClientForm">
+        <div class="field">
+          <label for="clientName">Nombre del sistema</label>
+          <input id="clientName" class="input" maxlength="128" placeholder="Ej.: Sistema CIP" required>
+        </div>
+
+        <div class="field">
+          <label for="clientDescription">Descripción</label>
+          <input id="clientDescription" class="input" maxlength="500" placeholder="Uso de la integración">
+        </div>
+
+        <div class="field">
+          <label for="clientRateLimit">Límite por minuto</label>
+          <input id="clientRateLimit" class="input" type="number" min="1" max="1000" value="60" required>
+        </div>
+
+        <div class="field">
+          <label for="clientMonthlyQuota">Cuota mensual (vacío = ilimitada)</label>
+          <input id="clientMonthlyQuota" class="input" type="number" min="1" max="1000000" placeholder="10000">
+        </div>
+
+        <div class="field">
+          <label>Permisos</label>
+          <label style="display:flex;gap:8px;align-items:center;margin-bottom:7px">
+            <input id="scopeSend" type="checkbox" checked>
+            <span>sms:send</span>
+          </label>
+          <label style="display:flex;gap:8px;align-items:center">
+            <input id="scopeRead" type="checkbox" checked>
+            <span>sms:read</span>
+          </label>
+        </div>
+
+        <button class="btn primary" type="submit" style="width:100%">Crear credencial</button>
+      </form>
+
+      <button id="closeCreateClientBtn" class="btn dialog-close">Cancelar</button>
+    </div>
+  </dialog>
+
+  <dialog id="clientSecretDialog">
+    <div class="dialog-body">
+      <h2 class="section-title">API key generada</h2>
+      <p class="section-copy">Cópiala ahora. El servidor conserva únicamente su hash y no podrá volver a mostrar este valor.</p>
+      <code id="clientSecretValue" class="secret-box"></code>
+      <button id="copyClientSecretBtn" class="btn primary" style="width:100%">Copiar API key</button>
+      <button id="closeClientSecretBtn" class="btn dialog-close">Ya la guardé</button>
+    </div>
+  </dialog>
 
   <dialog id="resolveDialog">
     <div class="dialog-body">
@@ -659,9 +826,11 @@ export function operatorPageHtml(version: string) {
       var state = {
         key: sessionStorage.getItem("smsGatewayOperatorKey") || "",
         gateways: [],
+        clients: [],
         messages: [],
         metrics: null,
         audit: [],
+        lastClientSecret: null,
         page: 1,
         pagination: {
           page: 1,
@@ -844,6 +1013,120 @@ export function operatorPageHtml(version: string) {
         );
       }
 
+      function renderClients() {
+        var grid = $("clientGrid");
+        var filter = $("clientFilter");
+        var currentFilter = filter.value;
+
+        filter.innerHTML =
+          '<option value="">Todos los clientes</option>';
+
+        state.clients.forEach(function (client) {
+          var option = document.createElement("option");
+          option.value = client.id;
+          option.textContent = client.name;
+          filter.appendChild(option);
+        });
+
+        if (
+          currentFilter &&
+          state.clients.some(function (client) {
+            return client.id === currentFilter;
+          })
+        ) {
+          filter.value = currentFilter;
+        }
+
+        if (!state.clients.length) {
+          grid.innerHTML =
+            '<div class="empty">Todavía no hay API Clients.</div>';
+          return;
+        }
+
+        grid.innerHTML = state.clients.map(function (client) {
+          var quota =
+            client.monthlyQuota == null
+              ? "Ilimitada"
+              : String(client.monthlyQuota);
+
+          return '<article class="client-card ' +
+              (client.enabled ? '' : 'disabled') + '">' +
+            '<div class="client-title-row">' +
+              '<div>' +
+                '<div class="client-name">' +
+                  escapeText(client.name) +
+                '</div>' +
+                '<div class="muted mono" style="margin-top:4px">' +
+                  escapeText(client.keyId) +
+                '</div>' +
+              '</div>' +
+              '<span class="status-line"><span class="dot ' +
+                (client.enabled ? 'ok' : 'bad') + '"></span>' +
+                (client.enabled ? 'Activo' : 'Revocado') +
+              '</span>' +
+            '</div>' +
+            (client.description
+              ? '<div class="muted" style="margin-top:8px">' +
+                  escapeText(client.description) +
+                '</div>'
+              : '') +
+            '<div class="client-metric">' +
+              '<strong>' + escapeText(client.monthlyUsage) + '</strong>' +
+              '<span class="muted">SMS este mes / ' +
+                escapeText(quota) + '</span>' +
+            '</div>' +
+            '<div class="gateway-meta">Rate limit: ' +
+              escapeText(client.rateLimitPerMinute) +
+              '/min · Último uso: ' +
+              escapeText(fmt(client.lastUsedAt)) +
+            '</div>' +
+            '<div class="scope-list">' +
+              (client.scopes || []).map(function (scope) {
+                return '<span class="scope-chip">' +
+                  escapeText(scope) +
+                '</span>';
+              }).join('') +
+            '</div>' +
+            '<div class="client-actions">' +
+              '<button class="btn client-limits" data-client-id="' +
+                escapeText(client.id) + '">Límites</button>' +
+              '<button class="btn client-rotate" data-client-id="' +
+                escapeText(client.id) + '">Rotar clave</button>' +
+              '<button class="btn client-toggle" data-client-id="' +
+                escapeText(client.id) + '" data-enabled="' +
+                String(client.enabled) + '">' +
+                (client.enabled ? 'Revocar' : 'Activar') +
+              '</button>' +
+            '</div>' +
+          '</article>';
+        }).join("");
+
+        document.querySelectorAll(".client-toggle").forEach(function (button) {
+          button.addEventListener("click", function () {
+            toggleApiClient(
+              button.getAttribute("data-client-id"),
+              button.getAttribute("data-enabled") === "true"
+            );
+          });
+        });
+
+        document.querySelectorAll(".client-rotate").forEach(function (button) {
+          button.addEventListener("click", function () {
+            rotateApiClientKey(
+              button.getAttribute("data-client-id")
+            );
+          });
+        });
+
+        document.querySelectorAll(".client-limits").forEach(function (button) {
+          button.addEventListener("click", function () {
+            editApiClientLimits(
+              button.getAttribute("data-client-id")
+            );
+          });
+        });
+      }
+
       function renderMetrics() {
         var metrics = state.metrics;
 
@@ -899,12 +1182,24 @@ export function operatorPageHtml(version: string) {
         var tbody = $("messageRows");
 
         if (!state.messages.length) {
-          tbody.innerHTML = '<tr><td colspan="6" class="empty">No hay mensajes para esos filtros.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" class="empty">No hay mensajes para esos filtros.</td></tr>';
           renderPagination();
           return;
         }
 
         tbody.innerHTML = state.messages.map(function (m) {
+          var sourceLabel = "Operador";
+
+          if (m.clientId) {
+            var sourceClient = state.clients.find(function (client) {
+              return client.id === m.clientId;
+            });
+
+            sourceLabel = sourceClient
+              ? sourceClient.name
+              : m.clientId;
+          }
+
           var actions =
             '<div class="row-actions">' +
               '<button class="btn detail-btn" data-job-id="' +
@@ -934,6 +1229,7 @@ export function operatorPageHtml(version: string) {
             '<td><div class="mono">' + escapeText(m.gatewayId) + '</div>' +
               '<div class="muted mono" style="margin-top:5px">' +
                 escapeText(m.id.slice(0, 18)) + '…</div></td>' +
+            '<td>' + escapeText(sourceLabel) + '</td>' +
             '<td>' + escapeText(m.attempts) + '</td>' +
             '<td>' + escapeText(fmt(m.createdAt)) + '</td>' +
             '<td>' + actions + '</td>' +
@@ -962,6 +1258,7 @@ export function operatorPageHtml(version: string) {
         }
 
         var gatewayFilter = $("gatewayFilter").value;
+        var clientFilter = $("clientFilter").value;
         var statusFilter = $("statusFilter").value;
         var perPage = Number($("perPageSelect").value || 25);
 
@@ -969,27 +1266,32 @@ export function operatorPageHtml(version: string) {
         params.set("page", String(state.page));
         params.set("perPage", String(perPage));
         if (gatewayFilter) params.set("gatewayId", gatewayFilter);
+        if (clientFilter) params.set("clientId", clientFilter);
         if (statusFilter) params.set("status", statusFilter);
 
         var metricsParams = new URLSearchParams();
         if (gatewayFilter) metricsParams.set("gatewayId", gatewayFilter);
+        if (clientFilter) metricsParams.set("clientId", clientFilter);
 
         try {
           var results = await Promise.all([
             api("/api/v1/gateways"),
+            api("/api/v1/clients"),
             api("/api/v1/messages?" + params.toString()),
             api("/api/v1/metrics?" + metricsParams.toString()),
             api("/api/v1/audit?limit=20")
           ]);
 
           state.gateways = results[0].gateways || [];
-          state.messages = results[1].messages || [];
-          state.pagination = results[1].pagination || state.pagination;
+          state.clients = results[1].clients || [];
+          state.messages = results[2].messages || [];
+          state.pagination = results[2].pagination || state.pagination;
           state.page = state.pagination.page;
-          state.metrics = results[2];
-          state.audit = results[3].logs || [];
+          state.metrics = results[3];
+          state.audit = results[4].logs || [];
 
           renderGateways();
+          renderClients();
           renderMessages();
           renderMetrics();
           renderAudit();
@@ -1001,6 +1303,236 @@ export function operatorPageHtml(version: string) {
             setConnection(false, "Backend no disponible");
           }
           toast(error.message, true);
+        }
+      }
+
+      function showClientSecret(apiKey) {
+        state.lastClientSecret = apiKey;
+        $("clientSecretValue").textContent = apiKey;
+        $("clientSecretDialog").showModal();
+      }
+
+      async function createApiClient(event) {
+        event.preventDefault();
+
+        var scopes = [];
+        if ($("scopeSend").checked) scopes.push("sms:send");
+        if ($("scopeRead").checked) scopes.push("sms:read");
+
+        if (!scopes.length) {
+          toast("Selecciona al menos un permiso.", true);
+          return;
+        }
+
+        var quotaRaw = $("clientMonthlyQuota").value.trim();
+        var payload = {
+          name: $("clientName").value.trim(),
+          description: $("clientDescription").value.trim(),
+          scopes: scopes,
+          rateLimitPerMinute: Number($("clientRateLimit").value),
+          monthlyQuota: quotaRaw ? Number(quotaRaw) : null
+        };
+
+        try {
+          var result = await api("/api/v1/clients", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+
+          $("createClientDialog").close();
+          $("createClientForm").reset();
+          $("clientRateLimit").value = "60";
+          $("scopeSend").checked = true;
+          $("scopeRead").checked = true;
+
+          await refresh();
+          showClientSecret(result.apiKey);
+        } catch (error) {
+          toast("No se pudo crear el API Client: " + error.message, true);
+        }
+      }
+
+      async function toggleApiClient(clientId, currentlyEnabled) {
+        var nextEnabled = !currentlyEnabled;
+        var action = nextEnabled ? "activar" : "revocar";
+
+        var note = window.prompt(
+          "Motivo para " + action + " este API Client:"
+        );
+
+        if (note == null) return;
+        note = note.trim();
+
+        if (note.length < 3) {
+          toast("La nota debe tener al menos 3 caracteres.", true);
+          return;
+        }
+
+        if (!window.confirm(
+          "¿Confirmas " + action + " este API Client?"
+        )) {
+          return;
+        }
+
+        try {
+          await api(
+            "/api/v1/clients/" + encodeURIComponent(clientId),
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                enabled: nextEnabled,
+                note: note
+              })
+            }
+          );
+
+          toast(
+            nextEnabled
+              ? "API Client activado."
+              : "API Client revocado."
+          );
+
+          await refresh();
+        } catch (error) {
+          toast("No se pudo actualizar el API Client: " + error.message, true);
+        }
+      }
+
+      async function editApiClientLimits(clientId) {
+        var client = state.clients.find(function (item) {
+          return item.id === clientId;
+        });
+
+        if (!client) return;
+
+        var rateRaw = window.prompt(
+          "Límite de solicitudes SMS por minuto:",
+          String(client.rateLimitPerMinute)
+        );
+
+        if (rateRaw == null) return;
+
+        var rate = Number(rateRaw);
+        if (!Number.isInteger(rate) || rate < 1 || rate > 1000) {
+          toast("El límite por minuto debe ser un entero entre 1 y 1000.", true);
+          return;
+        }
+
+        var quotaRaw = window.prompt(
+          "Cuota mensual. Déjalo vacío para ilimitada:",
+          client.monthlyQuota == null
+            ? ""
+            : String(client.monthlyQuota)
+        );
+
+        if (quotaRaw == null) return;
+
+        var quota = quotaRaw.trim()
+          ? Number(quotaRaw)
+          : null;
+
+        if (
+          quota != null &&
+          (!Number.isInteger(quota) || quota < 1 || quota > 1000000)
+        ) {
+          toast("La cuota mensual debe ser un entero válido.", true);
+          return;
+        }
+
+        var scopesRaw = window.prompt(
+          "Scopes separados por coma:",
+          (client.scopes || []).join(",")
+        );
+
+        if (scopesRaw == null) return;
+
+        var allowedScopes = ["sms:send", "sms:read"];
+        var scopes = scopesRaw
+          .split(",")
+          .map(function (value) { return value.trim(); })
+          .filter(Boolean);
+
+        if (
+          !scopes.length ||
+          scopes.some(function (scope) {
+            return !allowedScopes.includes(scope);
+          })
+        ) {
+          toast("Scopes permitidos: sms:send, sms:read.", true);
+          return;
+        }
+
+        var note = window.prompt(
+          "Motivo del cambio de límites:"
+        );
+
+        if (note == null) return;
+        note = note.trim();
+
+        if (note.length < 3) {
+          toast("La nota debe tener al menos 3 caracteres.", true);
+          return;
+        }
+
+        try {
+          await api(
+            "/api/v1/clients/" +
+              encodeURIComponent(clientId) +
+              "/limits",
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                scopes: scopes,
+                rateLimitPerMinute: rate,
+                monthlyQuota: quota,
+                note: note
+              })
+            }
+          );
+
+          toast("Límites del API Client actualizados.");
+          await refresh();
+        } catch (error) {
+          toast("No se pudieron actualizar los límites: " + error.message, true);
+        }
+      }
+
+      async function rotateApiClientKey(clientId) {
+        var note = window.prompt(
+          "Motivo para rotar esta API key:"
+        );
+
+        if (note == null) return;
+        note = note.trim();
+
+        if (note.length < 3) {
+          toast("La nota debe tener al menos 3 caracteres.", true);
+          return;
+        }
+
+        if (!window.confirm(
+          "La clave actual dejará de funcionar inmediatamente. ¿Continuar?"
+        )) {
+          return;
+        }
+
+        try {
+          var result = await api(
+            "/api/v1/clients/" +
+              encodeURIComponent(clientId) +
+              "/rotate-key",
+            {
+              method: "POST",
+              body: JSON.stringify({
+                note: note
+              })
+            }
+          );
+
+          await refresh();
+          showClientSecret(result.apiKey);
+        } catch (error) {
+          toast("No se pudo rotar la API key: " + error.message, true);
         }
       }
 
@@ -1233,6 +1765,7 @@ export function operatorPageHtml(version: string) {
         state.key = "";
         $("apiKey").value = "";
         state.gateways = [];
+        state.clients = [];
         state.messages = [];
         state.metrics = null;
         state.audit = [];
@@ -1244,6 +1777,7 @@ export function operatorPageHtml(version: string) {
           totalPages: 1
         };
         renderGateways();
+        renderClients();
         renderMessages();
         renderMetrics();
         renderAudit();
@@ -1253,6 +1787,11 @@ export function operatorPageHtml(version: string) {
       $("refreshBtn").addEventListener("click", refresh);
 
       $("gatewayFilter").addEventListener("change", function () {
+        state.page = 1;
+        refresh();
+      });
+
+      $("clientFilter").addEventListener("change", function () {
         state.page = 1;
         refresh();
       });
@@ -1295,6 +1834,35 @@ export function operatorPageHtml(version: string) {
         $("detailDialog").close();
       });
 
+      $("createClientBtn").addEventListener("click", function () {
+        $("createClientDialog").showModal();
+      });
+
+      $("closeCreateClientBtn").addEventListener("click", function () {
+        $("createClientDialog").close();
+      });
+
+      $("createClientForm").addEventListener("submit", createApiClient);
+
+      $("copyClientSecretBtn").addEventListener("click", async function () {
+        if (!state.lastClientSecret) return;
+
+        try {
+          await navigator.clipboard.writeText(
+            state.lastClientSecret
+          );
+          toast("API key copiada.");
+        } catch (_) {
+          toast("No se pudo copiar automáticamente. Selecciona el texto manualmente.", true);
+        }
+      });
+
+      $("closeClientSecretBtn").addEventListener("click", function () {
+        $("clientSecretDialog").close();
+        state.lastClientSecret = null;
+        $("clientSecretValue").textContent = "";
+      });
+
       document.querySelectorAll("[data-resolution]").forEach(function (button) {
         button.addEventListener("click", function () {
           resolve(button.getAttribute("data-resolution"));
@@ -1315,7 +1883,9 @@ export function operatorPageHtml(version: string) {
         if (
           state.key &&
           !$("resolveDialog").open &&
-          !$("detailDialog").open
+          !$("detailDialog").open &&
+          !$("createClientDialog").open &&
+          !$("clientSecretDialog").open
         ) {
           refresh();
         }

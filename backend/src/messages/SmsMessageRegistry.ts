@@ -11,7 +11,9 @@ export type SmsMessageStatus =
 
 export type SmsMessageRecord = {
   id: string;
+  sourceId: string;
   idempotencyKey: string;
+  clientId: string | null;
   gatewayId: string;
   destination: string;
   message: string;
@@ -33,14 +35,22 @@ export class SmsMessageRegistry {
   ) {}
 
   async enqueue(input: {
+    sourceId?: string;
+    clientId?: string | null;
     idempotencyKey: string;
     gatewayId: string;
     destination: string;
     message: string;
   }): Promise<{ message: SmsMessageRecord; created: boolean }> {
+    const sourceId =
+      input.sourceId?.trim() || "operator";
+
     const existing = await this.prisma.smsMessage.findUnique({
       where: {
-        idempotencyKey: input.idempotencyKey
+        sourceId_idempotencyKey: {
+          sourceId,
+          idempotencyKey: input.idempotencyKey
+        }
       }
     });
 
@@ -55,7 +65,9 @@ export class SmsMessageRegistry {
       const created = await this.prisma.smsMessage.create({
         data: {
           id: `sms_${randomUUID()}`,
+          sourceId,
           idempotencyKey: input.idempotencyKey,
+          clientId: input.clientId ?? null,
           gatewayId: input.gatewayId,
           destination: input.destination,
           message: input.message,
@@ -70,7 +82,10 @@ export class SmsMessageRegistry {
     } catch (error) {
       const raced = await this.prisma.smsMessage.findUnique({
         where: {
-          idempotencyKey: input.idempotencyKey
+          sourceId_idempotencyKey: {
+            sourceId,
+            idempotencyKey: input.idempotencyKey
+          }
         }
       });
 
@@ -83,6 +98,22 @@ export class SmsMessageRegistry {
 
       throw error;
     }
+  }
+
+  async getByIdempotency(
+    sourceId: string,
+    idempotencyKey: string
+  ) {
+    const message = await this.prisma.smsMessage.findUnique({
+      where: {
+        sourceId_idempotencyKey: {
+          sourceId,
+          idempotencyKey
+        }
+      }
+    });
+
+    return message ? toRecord(message) : null;
   }
 
   async claim(jobId: string, gatewayId: string) {
@@ -357,6 +388,7 @@ export class SmsMessageRegistry {
 
   async listPage(input: {
     gatewayId?: string;
+    clientId?: string;
     status?: SmsMessageStatus;
     page?: number;
     perPage?: number;
@@ -370,6 +402,9 @@ export class SmsMessageRegistry {
     const where = {
       ...(input.gatewayId
         ? { gatewayId: input.gatewayId }
+        : {}),
+      ...(input.clientId
+        ? { clientId: input.clientId }
         : {}),
       ...(input.status
         ? { status: input.status }
@@ -405,10 +440,14 @@ export class SmsMessageRegistry {
     };
   }
 
-  async metrics(gatewayId?: string) {
-    const where = gatewayId
-      ? { gatewayId }
-      : {};
+  async metrics(
+    gatewayId?: string,
+    clientId?: string
+  ) {
+    const where = {
+      ...(gatewayId ? { gatewayId } : {}),
+      ...(clientId ? { clientId } : {})
+    };
 
     const grouped = await this.prisma.smsMessage.groupBy({
       by: ["status"],
@@ -570,7 +609,9 @@ export class SmsMessageRegistry {
 
 function toRecord(message: {
   id: string;
+  sourceId: string;
   idempotencyKey: string;
+  clientId: string | null;
   gatewayId: string;
   destination: string;
   message: string;
@@ -587,7 +628,9 @@ function toRecord(message: {
 }): SmsMessageRecord {
   return {
     id: message.id,
+    sourceId: message.sourceId,
     idempotencyKey: message.idempotencyKey,
+    clientId: message.clientId,
     gatewayId: message.gatewayId,
     destination: message.destination,
     message: message.message,

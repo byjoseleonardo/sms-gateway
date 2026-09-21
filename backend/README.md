@@ -150,6 +150,12 @@ Authorization: Bearer <OPERATOR_API_KEY>
 - `GET /api/v1/messages/:jobId`
 - `GET /api/v1/messages/:jobId/detail`
 - `POST /api/v1/messages/:jobId/resolve`
+- `GET /api/v1/clients`
+- `POST /api/v1/clients`
+- `PATCH /api/v1/clients/:clientId`
+- `PATCH /api/v1/clients/:clientId/limits`
+- `POST /api/v1/clients/:clientId/rotate-key`
+- `GET /api/v1/clients/:clientId/metrics`
 
 La resolución manual solo acepta jobs `AMBIGUOUS` y permite registrar `SENT`, `DELIVERED` o `FAILED`. Guarda `operatorResolvedAt` y `operatorResolutionNote` y nunca reencola el SMS.
 
@@ -176,9 +182,13 @@ La API key se introduce en el navegador y se mantiene únicamente en `sessionSto
 - crear jobs SMS con idempotency key única;
 - refresco automático cada 5 segundos;
 - consultar auditoría administrativa reciente;
-- resolver estados `AMBIGUOUS` con confirmación y nota de auditoría.
+- resolver estados `AMBIGUOUS` con confirmación y nota de auditoría;
+- crear y administrar API Clients para sistemas externos;
+- ver consumo mensual, scopes, cuota y rate limit por cliente;
+- filtrar historial y métricas por sistema consumidor;
+- rotar o revocar claves de clientes.
 
-No contiene claves embebidas ni dependencias web externas.
+Las API keys de clientes se muestran una sola vez al crearlas o rotarlas. El panel no contiene claves embebidas ni dependencias web externas.
 
 ### Socket.IO
 
@@ -246,3 +256,73 @@ La consola de operador añade:
 
 Al deshabilitar un gateway se limpia `lastSeenAt`; al volverlo a habilitar se mantiene
 offline hasta recibir un heartbeat nuevo.
+
+
+## API Clients v0.16
+
+Los sistemas externos no usan `OPERATOR_API_KEY`. Cada integración recibe una credencial propia con formato:
+
+```text
+sk_sms_<keyId>_<secret>
+```
+
+El backend conserva únicamente `keyId` y SHA-256 de la clave. La clave completa se devuelve una sola vez y las respuestas que la contienen usan `Cache-Control: no-store`.
+
+Scopes disponibles actualmente:
+
+- `sms:send`: crear mensajes;
+- `sms:read`: consultar estado y consumo propio.
+
+Cada cliente puede tener un `rateLimitPerMinute` y una `monthlyQuota`. La revocación y rotación son independientes para cada sistema.
+
+### Enviar desde un sistema externo
+
+```http
+POST /api/v1/client/messages
+Authorization: Bearer sk_sms_<clave-del-sistema>
+Content-Type: application/json
+
+{
+  "idempotencyKey": "pedido-123-notificacion",
+  "destination": "+51999999999",
+  "message": "Tu pedido fue procesado"
+}
+```
+
+`gatewayId` es opcional. Si se omite, el backend selecciona un gateway habilitado y Online. Esta selección simple será sustituida por pools/políticas de routing cuando se habilite multi-gateway.
+
+La idempotencia está aislada por cliente: dos sistemas pueden usar la misma `idempotencyKey` sin colisionar. Repetir la misma clave dentro del mismo cliente devuelve el job existente y no consume cuota nuevamente.
+
+### Consultar estado y consumo
+
+```http
+GET /api/v1/client/messages/:jobId
+Authorization: Bearer sk_sms_<clave-del-sistema>
+```
+
+Un cliente solo puede consultar sus propios mensajes. Los jobs pertenecientes a otro cliente se responden como no encontrados.
+
+```http
+GET /api/v1/client/usage
+Authorization: Bearer sk_sms_<clave-del-sistema>
+```
+
+Devuelve totales, consumo del mes, estados y tasa de entrega del cliente autenticado.
+
+### Atribución
+
+`sms_messages` registra `source_id` y `client_id`. Los mensajes históricos y los creados manualmente por el operador usan `source_id = operator`; los mensajes de integraciones quedan asociados a su `ApiClient`.
+
+## Validación v0.16
+
+La suite incluye pruebas PostgreSQL y HTTP aisladas para:
+
+- autenticación y revocación de API Clients;
+- rotación de API key y revocación inmediata de la anterior;
+- idempotencia independiente entre sistemas;
+- cuota mensual y métricas por cliente;
+- envío HTTP idempotente contra un gateway sintético sin dispositivo;
+- acceso únicamente a mensajes propios;
+- rechazo de credenciales inválidas.
+
+Las pruebas HTTP usan claves y gateways sintéticos y no despachan SMS reales.
