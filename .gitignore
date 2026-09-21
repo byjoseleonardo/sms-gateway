@@ -22,3 +22,7 @@ backend/src/generated/prisma/
 backend/.env
 backend/.env.*
 !backend/.env.example
+
+# Local Android release signing credentials
+keystore.properties
+/release/
