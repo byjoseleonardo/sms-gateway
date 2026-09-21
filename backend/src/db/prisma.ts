@@ -11,7 +11,10 @@ export function databaseUrl() {
 export function createPrismaClient(
   connectionString = databaseUrl()
 ) {
-  const adapter = new PrismaPg({ connectionString });
+  const adapter = new PrismaPg(
+    { connectionString },
+    { schema: "public" }
+  );
 
   return new PrismaClient({
     adapter
