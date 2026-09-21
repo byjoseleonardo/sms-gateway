@@ -142,9 +142,13 @@ Authorization: Bearer <OPERATOR_API_KEY>
 ```
 
 - `GET /api/v1/gateways`
+- `PATCH /api/v1/gateways/:gatewayId`
+- `GET /api/v1/audit`
+- `GET /api/v1/metrics`
 - `GET /api/v1/messages`
 - `POST /api/v1/messages`
 - `GET /api/v1/messages/:jobId`
+- `GET /api/v1/messages/:jobId/detail`
 - `POST /api/v1/messages/:jobId/resolve`
 
 La resolución manual solo acepta jobs `AMBIGUOUS` y permite registrar `SENT`, `DELIVERED` o `FAILED`. Guarda `operatorResolvedAt` y `operatorResolutionNote` y nunca reencola el SMS.
@@ -165,10 +169,13 @@ http://127.0.0.1:3000/operator
 
 La API key se introduce en el navegador y se mantiene únicamente en `sessionStorage` de esa pestaña. El panel permite:
 
-- ver gateways online/offline;
-- consultar y filtrar mensajes;
+- ver gateways online/offline y habilitarlos/deshabilitarlos con nota;
+- consultar y filtrar mensajes con paginación;
+- ver métricas globales o por gateway;
+- abrir el detalle de un SMS con timeline reconstruido;
 - crear jobs SMS con idempotency key única;
 - refresco automático cada 5 segundos;
+- consultar auditoría administrativa reciente;
 - resolver estados `AMBIGUOUS` con confirmación y nota de auditoría.
 
 No contiene claves embebidas ni dependencias web externas.
@@ -225,3 +232,17 @@ preexistente y mantiene heartbeat. Los E2E remotos conservan `DELIVERED`,
 timestamps e idempotencia en PostgreSQL. También se validó recuperación de un
 job `QUEUED` cuyo evento realtime inicial se perdió y resolución manual de un
 `AMBIGUOUS` sintético sin retransmisión.
+
+## Consola v0.14
+
+La consola de operador añade:
+
+- paginación server-side de mensajes;
+- métricas por estado y tasa de entrega;
+- timeline de `QUEUED → CLAIMED → SENT → DELIVERED`;
+- control de habilitación del gateway;
+- tabla `operator_audit_logs` para cambios administrativos;
+- bloqueo de reanuncio por heartbeat cuando un gateway está deshabilitado.
+
+Al deshabilitar un gateway se limpia `lastSeenAt`; al volverlo a habilitar se mantiene
+offline hasta recibir un heartbeat nuevo.

@@ -10,7 +10,7 @@ import { operatorPageHtml } from "./operator/operatorPage.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.13.0";
+export const APP_VERSION = "0.14.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -46,7 +46,21 @@ const listMessagesQuerySchema = z.object({
     "FAILED",
     "AMBIGUOUS"
   ]).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(5).max(100).default(25)
+});
+
+const metricsQuerySchema = z.object({
+  gatewayId: z.string().trim().min(3).max(64).optional()
+});
+
+const auditQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50)
+});
+
+const gatewayControlSchema = z.object({
+  enabled: z.boolean(),
+  note: z.string().trim().min(3).max(500)
 });
 
 const resolveAmbiguousSchema = z.object({
@@ -181,6 +195,76 @@ export function createApp(
     });
   });
 
+  app.patch(
+    "/api/v1/gateways/:gatewayId",
+    operatorAuth,
+    async (req, res) => {
+      const parsed = gatewayControlSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        res.status(400).json({
+          error: "invalid_gateway_control_payload",
+          details: parsed.error.flatten()
+        });
+        return;
+      }
+
+      const result = await gatewayRegistry.setEnabled(
+        req.params.gatewayId as string,
+        parsed.data.enabled,
+        parsed.data.note
+      );
+
+      if (result.kind === "not_found") {
+        res.status(404).json({
+          error: "gateway_not_found"
+        });
+        return;
+      }
+
+      res.json({
+        status: "ok",
+        gateway: result.gateway
+      });
+    }
+  );
+
+  app.get("/api/v1/audit", operatorAuth, async (req, res) => {
+    const parsed = auditQuerySchema.safeParse(req.query);
+
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "invalid_audit_query"
+      });
+      return;
+    }
+
+    const logs = await gatewayRegistry.listAudit(
+      parsed.data.limit
+    );
+
+    res.json({
+      logs
+    });
+  });
+
+  app.get("/api/v1/metrics", operatorAuth, async (req, res) => {
+    const parsed = metricsQuerySchema.safeParse(req.query);
+
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "invalid_metrics_query"
+      });
+      return;
+    }
+
+    res.json(
+      await messageRegistry.metrics(
+        parsed.data.gatewayId
+      )
+    );
+  });
+
   app.get("/api/v1/messages", operatorAuth, async (req, res) => {
     const parsed = listMessagesQuerySchema.safeParse(req.query);
 
@@ -192,11 +276,9 @@ export function createApp(
       return;
     }
 
-    const messages = await messageRegistry.list(parsed.data);
-
-    res.json({
-      messages
-    });
+    res.json(
+      await messageRegistry.listPage(parsed.data)
+    );
   });
 
   app.post("/api/v1/messages", operatorAuth, async (req, res) => {
@@ -236,6 +318,25 @@ export function createApp(
       message: result.message
     });
   });
+
+  app.get(
+    "/api/v1/messages/:jobId/detail",
+    operatorAuth,
+    async (req, res) => {
+      const detail = await messageRegistry.getDetail(
+        req.params.jobId as string
+      );
+
+      if (!detail) {
+        res.status(404).json({
+          error: "message_not_found"
+        });
+        return;
+      }
+
+      res.json(detail);
+    }
+  );
 
   app.get("/api/v1/messages/:jobId", operatorAuth, async (req, res) => {
     const message = await messageRegistry.get(req.params.jobId as string);

@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { AppPrismaClient } from "../db/prisma.js";
 
 export type GatewayRecord = {
@@ -154,6 +154,71 @@ export class GatewayRegistry {
     });
   }
 
+  async setEnabled(
+    gatewayId: string,
+    enabled: boolean,
+    note: string
+  ) {
+    const existing = await this.prisma.gateway.findUnique({
+      where: {
+        gatewayId
+      }
+    });
+
+    if (!existing) {
+      return { kind: "not_found" as const };
+    }
+
+    const gateway = await this.prisma.gateway.update({
+      where: {
+        gatewayId
+      },
+      data: {
+        enabled,
+        ...(!enabled
+          ? { lastSeenAt: null }
+          : {})
+      }
+    });
+
+    await this.prisma.operatorAuditLog.create({
+      data: {
+        id: `audit_${randomUUID()}`,
+        action: enabled
+          ? "GATEWAY_ENABLED"
+          : "GATEWAY_DISABLED",
+        targetId: gatewayId,
+        gatewayId,
+        note: note.trim()
+      }
+    });
+
+    return {
+      kind: "updated" as const,
+      gateway: toGatewayStatus(gateway)
+    };
+  }
+
+  async listAudit(limit = 50) {
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+
+    const logs = await this.prisma.operatorAuditLog.findMany({
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: safeLimit
+    });
+
+    return logs.map(log => ({
+      id: log.id,
+      action: log.action,
+      targetId: log.targetId,
+      gatewayId: log.gatewayId,
+      note: log.note,
+      createdAt: log.createdAt.toISOString()
+    }));
+  }
+
   async getStatus(gatewayId: string) {
     const gateway = await this.prisma.gateway.findUnique({
       where: {
@@ -165,19 +230,32 @@ export class GatewayRegistry {
 
     const lastSeenMs = gateway.lastSeenAt?.getTime() ?? 0;
 
-    return {
-      gatewayId: gateway.gatewayId,
-      enabled: gateway.enabled,
-      online:
-        gateway.enabled &&
-        lastSeenMs > 0 &&
-        Date.now() - lastSeenMs < 45_000,
-      lastSeenAt: gateway.lastSeenAt?.toISOString() ?? null,
-      deviceModel: gateway.deviceModel,
-      androidVersion: gateway.androidVersion,
-      appVersion: gateway.appVersion
-    };
+    return toGatewayStatus(gateway);
   }
+}
+
+function toGatewayStatus(gateway: {
+  gatewayId: string;
+  enabled: boolean;
+  lastSeenAt: Date | null;
+  deviceModel: string;
+  androidVersion: string;
+  appVersion: string;
+}) {
+  const lastSeenMs = gateway.lastSeenAt?.getTime() ?? 0;
+
+  return {
+    gatewayId: gateway.gatewayId,
+    enabled: gateway.enabled,
+    online:
+      gateway.enabled &&
+      lastSeenMs > 0 &&
+      Date.now() - lastSeenMs < 45_000,
+    lastSeenAt: gateway.lastSeenAt?.toISOString() ?? null,
+    deviceModel: gateway.deviceModel,
+    androidVersion: gateway.androidVersion,
+    appVersion: gateway.appVersion
+  };
 }
 
 function toGatewayRecord(gateway: {

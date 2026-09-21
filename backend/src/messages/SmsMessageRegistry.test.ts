@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, test } from "node:test";
 import { createPrismaClient } from "../db/prisma.js";
+import { GatewayRegistry } from "../gateways/GatewayRegistry.js";
 import { SmsMessageRegistry } from "./SmsMessageRegistry.js";
 
 const prisma = createPrismaClient();
 const registry = new SmsMessageRegistry(prisma);
+const gatewayRegistry = new GatewayRegistry(prisma);
 const suffix = process.pid.toString();
 const gatewayId = `GW-TEST-${suffix}`;
 const keyPrefix = `test-${suffix}-`;
@@ -32,6 +34,21 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  await prisma.operatorAuditLog.deleteMany({
+    where: {
+      gatewayId
+    }
+  });
+
+  await prisma.gateway.update({
+    where: {
+      gatewayId
+    },
+    data: {
+      enabled: true
+    }
+  });
+
   await prisma.smsMessage.deleteMany({
     where: {
       idempotencyKey: {
@@ -42,6 +59,12 @@ beforeEach(async () => {
 });
 
 after(async () => {
+  await prisma.operatorAuditLog.deleteMany({
+    where: {
+      gatewayId
+    }
+  });
+
   await prisma.smsMessage.deleteMany({
     where: {
       idempotencyKey: {
@@ -305,4 +328,100 @@ test("operator resolution rejects non ambiguous jobs", async () => {
 
   assert.equal(persisted?.status, "QUEUED");
   assert.equal(persisted?.attempts, 0);
+});
+
+
+test("listPage and metrics summarize persisted messages", async () => {
+  for (let index = 0; index < 6; index += 1) {
+    await registry.enqueue({
+      idempotencyKey: `${keyPrefix}page-${index}`,
+      gatewayId,
+      destination: "+51987654321",
+      message: `page-${index}`
+    });
+  }
+
+  const page = await registry.listPage({
+    gatewayId,
+    page: 2,
+    perPage: 5
+  });
+
+  assert.equal(page.pagination.total, 6);
+  assert.equal(page.pagination.page, 2);
+  assert.equal(page.pagination.totalPages, 2);
+  assert.equal(page.messages.length, 1);
+
+  const metrics = await registry.metrics(gatewayId);
+
+  assert.equal(metrics.total, 6);
+  assert.equal(metrics.counts.QUEUED, 6);
+  assert.equal(metrics.last24h, 6);
+});
+
+test("getDetail reconstructs the message timeline", async () => {
+  const queued = await registry.enqueue({
+    idempotencyKey: `${keyPrefix}timeline`,
+    gatewayId,
+    destination: "+51987654321",
+    message: "timeline"
+  });
+
+  await registry.claim(queued.message.id, gatewayId);
+  await registry.updateStatus(
+    queued.message.id,
+    gatewayId,
+    "DELIVERED"
+  );
+
+  const detail = await registry.getDetail(
+    queued.message.id
+  );
+
+  assert.deepEqual(
+    detail?.timeline.map(event => event.kind),
+    ["QUEUED", "CLAIMED", "DELIVERED"]
+  );
+});
+
+test("gateway enable state is audited", async () => {
+  const disabled = await gatewayRegistry.setEnabled(
+    gatewayId,
+    false,
+    "maintenance test"
+  );
+
+  assert.equal(disabled.kind, "updated");
+
+  if (disabled.kind === "updated") {
+    assert.equal(disabled.gateway.enabled, false);
+    assert.equal(disabled.gateway.online, false);
+  }
+
+  const reenabled = await gatewayRegistry.setEnabled(
+    gatewayId,
+    true,
+    "maintenance finished"
+  );
+
+  assert.equal(reenabled.kind, "updated");
+
+  if (reenabled.kind === "updated") {
+    assert.equal(reenabled.gateway.enabled, true);
+    assert.equal(reenabled.gateway.online, false);
+  }
+
+  await gatewayRegistry.touch(gatewayId, "test");
+
+  const liveStatus =
+    await gatewayRegistry.getStatus(gatewayId);
+
+  assert.equal(liveStatus?.online, true);
+
+  const audit = await gatewayRegistry.listAudit(10);
+
+  assert.equal(audit[0]?.action, "GATEWAY_ENABLED");
+  assert.equal(audit[1]?.action, "GATEWAY_DISABLED");
+  assert.equal(audit[1]?.gatewayId, gatewayId);
+  assert.equal(audit[1]?.note, "maintenance test");
 });

@@ -107,6 +107,17 @@ io.on("connection", async socket => {
       appVersion
     );
 
+    if (!gateway) {
+      if (typeof acknowledge === "function") {
+        acknowledge({
+          status: "disabled",
+          lastSeenAt: null,
+          queuedJobsReannounced: 0
+        });
+      }
+      return;
+    }
+
     const queuedJobs =
       await messageRegistry.getQueuedForGateway(gatewayId);
 
@@ -119,7 +130,7 @@ io.on("connection", async socket => {
     if (typeof acknowledge === "function") {
       acknowledge({
         status: "ok",
-        lastSeenAt: gateway?.lastSeenAt ?? null,
+        lastSeenAt: gateway.lastSeenAt,
         queuedJobsReannounced: queuedJobs.length
       });
     }

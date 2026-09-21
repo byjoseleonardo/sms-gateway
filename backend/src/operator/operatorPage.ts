@@ -205,7 +205,7 @@ export function operatorPageHtml(version: string) {
 
     .stats {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 18px;
     }
@@ -272,7 +272,7 @@ export function operatorPageHtml(version: string) {
 
     .filters {
       display: grid;
-      grid-template-columns: minmax(170px, 1fr) minmax(160px, 220px) auto;
+      grid-template-columns: minmax(170px, 1fr) minmax(160px, 220px) 120px auto;
       gap: 10px;
       padding: 14px;
       border-bottom: 1px solid var(--line);
@@ -370,6 +370,52 @@ export function operatorPageHtml(version: string) {
       color: var(--muted);
       font-size: .75rem;
       margin-top: 3px;
+    }
+
+    .gateway-actions, .row-actions {
+      display: flex;
+      gap: 7px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .timeline-item {
+      border-left: 2px solid var(--accent);
+      padding: 2px 0 2px 12px;
+    }
+
+    .timeline-kind {
+      font-weight: 800;
+      font-size: .86rem;
+    }
+
+    .audit-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .audit-item {
+      padding: 9px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: rgba(7,16,25,.38);
+      font-size: .78rem;
     }
 
     .toast {
@@ -479,16 +525,20 @@ export function operatorPageHtml(version: string) {
         <div id="onlineCount" class="value">—</div>
       </article>
       <article class="panel stat">
-        <div class="label">Mensajes visibles</div>
-        <div id="messageCount" class="value">—</div>
+        <div class="label">SMS totales</div>
+        <div id="totalCount" class="value">—</div>
+      </article>
+      <article class="panel stat">
+        <div class="label">Últimas 24 h</div>
+        <div id="last24hCount" class="value">—</div>
+      </article>
+      <article class="panel stat">
+        <div class="label">Tasa entrega</div>
+        <div id="deliveryRate" class="value">—</div>
       </article>
       <article class="panel stat">
         <div class="label">Ambiguos</div>
         <div id="ambiguousCount" class="value">—</div>
-      </article>
-      <article class="panel stat">
-        <div class="label">Fallidos</div>
-        <div id="failedCount" class="value">—</div>
       </article>
     </section>
 
@@ -519,6 +569,8 @@ export function operatorPageHtml(version: string) {
         </form>
 
         <div id="gatewayCards" class="gateway-list"></div>
+        <h3 class="section-title" style="margin-top:20px">Auditoría reciente</h3>
+        <div id="auditList" class="audit-list"></div>
       </aside>
 
       <section class="panel">
@@ -535,6 +587,13 @@ export function operatorPageHtml(version: string) {
             <option>DELIVERED</option>
             <option>FAILED</option>
             <option>AMBIGUOUS</option>
+          </select>
+
+          <select id="perPageSelect">
+            <option value="10">10 / pág.</option>
+            <option value="25" selected>25 / pág.</option>
+            <option value="50">50 / pág.</option>
+            <option value="100">100 / pág.</option>
           </select>
 
           <button id="refreshBtn" class="btn">Actualizar</button>
@@ -557,6 +616,11 @@ export function operatorPageHtml(version: string) {
             </tbody>
           </table>
         </div>
+        <div class="pagination">
+          <button id="prevPageBtn" class="btn">Anterior</button>
+          <span id="pageLabel" class="muted">Página —</span>
+          <button id="nextPageBtn" class="btn">Siguiente</button>
+        </div>
       </section>
     </section>
   </main>
@@ -578,6 +642,14 @@ export function operatorPageHtml(version: string) {
     </div>
   </dialog>
 
+  <dialog id="detailDialog">
+    <div class="dialog-body">
+      <h2 class="section-title">Detalle del SMS</h2>
+      <div id="detailContent"></div>
+      <button id="closeDetailBtn" class="btn dialog-close">Cerrar</button>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast"></div>
 
   <script>
@@ -588,6 +660,15 @@ export function operatorPageHtml(version: string) {
         key: sessionStorage.getItem("smsGatewayOperatorKey") || "",
         gateways: [],
         messages: [],
+        metrics: null,
+        audit: [],
+        page: 1,
+        pagination: {
+          page: 1,
+          perPage: 25,
+          total: 0,
+          totalPages: 1
+        },
         resolvingJobId: null,
         timer: null
       };
@@ -670,59 +751,149 @@ export function operatorPageHtml(version: string) {
         filter.innerHTML = '<option value="">Todos los gateways</option>';
 
         state.gateways.forEach(function (g) {
-          var option = document.createElement("option");
-          option.value = g.gatewayId;
-          option.textContent = g.gatewayId + (g.online ? " · online" : " · offline");
-          select.appendChild(option);
+          if (g.enabled) {
+            var option = document.createElement("option");
+            option.value = g.gatewayId;
+            option.textContent =
+              g.gatewayId + (g.online ? " · online" : " · offline");
+            select.appendChild(option);
+          }
 
-          var filterOption = option.cloneNode(true);
+          var filterOption = document.createElement("option");
+          filterOption.value = g.gatewayId;
+          filterOption.textContent = g.gatewayId;
           filter.appendChild(filterOption);
         });
 
-        if (currentSend && state.gateways.some(function (g) { return g.gatewayId === currentSend; })) {
+        if (
+          currentSend &&
+          state.gateways.some(function (g) {
+            return g.gatewayId === currentSend && g.enabled;
+          })
+        ) {
           select.value = currentSend;
         }
 
-        if (currentFilter && state.gateways.some(function (g) { return g.gatewayId === currentFilter; })) {
+        if (
+          currentFilter &&
+          state.gateways.some(function (g) {
+            return g.gatewayId === currentFilter;
+          })
+        ) {
           filter.value = currentFilter;
         }
 
         var cards = $("gatewayCards");
         cards.innerHTML = state.gateways.map(function (g) {
+          var stateLabel = !g.enabled
+            ? "Deshabilitado"
+            : g.online
+              ? "Online"
+              : "Offline";
+
+          var buttonLabel = g.enabled
+            ? "Deshabilitar"
+            : "Habilitar";
+
           return '<div class="gateway-item">' +
             '<div><div class="gateway-name">' + escapeText(g.gatewayId) + '</div>' +
             '<div class="gateway-meta">' + escapeText(g.deviceModel) + ' · Android ' +
-              escapeText(g.androidVersion) + ' · app ' + escapeText(g.appVersion) + '</div></div>' +
-            '<span class="status-line"><span class="dot ' + (g.online ? 'ok' : 'bad') + '"></span>' +
-              (g.online ? 'Online' : 'Offline') + '</span>' +
+              escapeText(g.androidVersion) + ' · app ' + escapeText(g.appVersion) + '</div>' +
+            '<div class="gateway-meta">Último heartbeat: ' + escapeText(fmt(g.lastSeenAt)) + '</div></div>' +
+            '<div class="gateway-actions">' +
+              '<span class="status-line"><span class="dot ' +
+                (g.online ? 'ok' : 'bad') + '"></span>' + stateLabel + '</span>' +
+              '<button class="btn gateway-toggle" data-gateway-id="' +
+                escapeText(g.gatewayId) + '" data-enabled="' +
+                String(g.enabled) + '">' + buttonLabel + '</button>' +
+            '</div>' +
           '</div>';
         }).join("");
+
+        document.querySelectorAll(".gateway-toggle").forEach(function (button) {
+          button.addEventListener("click", function () {
+            toggleGateway(
+              button.getAttribute("data-gateway-id"),
+              button.getAttribute("data-enabled") === "true"
+            );
+          });
+        });
 
         $("onlineCount").textContent = String(
           state.gateways.filter(function (g) { return g.online; }).length
         );
       }
 
-      function renderMessages() {
-        $("messageCount").textContent = String(state.messages.length);
-        $("ambiguousCount").textContent = String(
-          state.messages.filter(function (m) { return m.status === "AMBIGUOUS"; }).length
-        );
-        $("failedCount").textContent = String(
-          state.messages.filter(function (m) { return m.status === "FAILED"; }).length
-        );
+      function renderMetrics() {
+        var metrics = state.metrics;
 
+        if (!metrics) {
+          $("totalCount").textContent = "—";
+          $("last24hCount").textContent = "—";
+          $("deliveryRate").textContent = "—";
+          $("ambiguousCount").textContent = "—";
+          return;
+        }
+
+        $("totalCount").textContent = String(metrics.total);
+        $("last24hCount").textContent = String(metrics.last24h);
+        $("deliveryRate").textContent =
+          metrics.deliveryRate == null
+            ? "—"
+            : String(metrics.deliveryRate) + "%";
+        $("ambiguousCount").textContent =
+          String(metrics.counts.AMBIGUOUS || 0);
+      }
+
+      function renderAudit() {
+        var container = $("auditList");
+
+        if (!state.audit.length) {
+          container.innerHTML =
+            '<div class="muted">Sin acciones administrativas recientes.</div>';
+          return;
+        }
+
+        container.innerHTML = state.audit.slice(0, 8).map(function (entry) {
+          return '<div class="audit-item">' +
+            '<strong>' + escapeText(entry.action) + '</strong>' +
+            '<div class="muted">' + escapeText(entry.targetId) +
+              ' · ' + escapeText(fmt(entry.createdAt)) + '</div>' +
+            (entry.note
+              ? '<div style="margin-top:4px">' + escapeText(entry.note) + '</div>'
+              : '') +
+          '</div>';
+        }).join("");
+      }
+
+      function renderPagination() {
+        var p = state.pagination;
+        $("pageLabel").textContent =
+          "Página " + p.page + " de " + p.totalPages +
+          " · " + p.total + " registros";
+        $("prevPageBtn").disabled = p.page <= 1;
+        $("nextPageBtn").disabled = p.page >= p.totalPages;
+      }
+
+      function renderMessages() {
         var tbody = $("messageRows");
 
         if (!state.messages.length) {
           tbody.innerHTML = '<tr><td colspan="6" class="empty">No hay mensajes para esos filtros.</td></tr>';
+          renderPagination();
           return;
         }
 
         tbody.innerHTML = state.messages.map(function (m) {
-          var action = m.status === "AMBIGUOUS"
-            ? '<button class="btn resolve-btn" data-job-id="' + escapeText(m.id) + '">Resolver</button>'
-            : '<span class="muted">—</span>';
+          var actions =
+            '<div class="row-actions">' +
+              '<button class="btn detail-btn" data-job-id="' +
+                escapeText(m.id) + '">Detalle</button>' +
+              (m.status === "AMBIGUOUS"
+                ? '<button class="btn resolve-btn" data-job-id="' +
+                    escapeText(m.id) + '">Resolver</button>'
+                : '') +
+            '</div>';
 
           var audit = m.operatorResolvedAt
             ? '<div class="muted" style="margin-top:5px">Resuelto manualmente · ' +
@@ -730,19 +901,22 @@ export function operatorPageHtml(version: string) {
             : '';
 
           var error = m.lastError
-            ? '<div style="color:#ffb5b9;margin-top:5px">' + escapeText(m.lastError) + '</div>'
+            ? '<div style="color:#ffb5b9;margin-top:5px">' +
+                escapeText(m.lastError) + '</div>'
             : '';
 
           return '<tr>' +
-            '<td><span class="badge ' + escapeText(m.status) + '">' + escapeText(m.status) + '</span>' +
-              audit + '</td>' +
+            '<td><span class="badge ' + escapeText(m.status) + '">' +
+              escapeText(m.status) + '</span>' + audit + '</td>' +
             '<td class="message-cell"><strong>' + escapeText(m.destination) + '</strong>' +
-              '<div style="margin-top:5px">' + escapeText(m.message) + '</div>' + error + '</td>' +
+              '<div style="margin-top:5px">' + escapeText(m.message) + '</div>' +
+              error + '</td>' +
             '<td><div class="mono">' + escapeText(m.gatewayId) + '</div>' +
-              '<div class="muted mono" style="margin-top:5px">' + escapeText(m.id.slice(0, 18)) + '…</div></td>' +
+              '<div class="muted mono" style="margin-top:5px">' +
+                escapeText(m.id.slice(0, 18)) + '…</div></td>' +
             '<td>' + escapeText(m.attempts) + '</td>' +
             '<td>' + escapeText(fmt(m.createdAt)) + '</td>' +
-            '<td>' + action + '</td>' +
+            '<td>' + actions + '</td>' +
           '</tr>';
         }).join("");
 
@@ -751,6 +925,14 @@ export function operatorPageHtml(version: string) {
             openResolve(button.getAttribute("data-job-id"));
           });
         });
+
+        document.querySelectorAll(".detail-btn").forEach(function (button) {
+          button.addEventListener("click", function () {
+            openDetail(button.getAttribute("data-job-id"));
+          });
+        });
+
+        renderPagination();
       }
 
       async function refresh() {
@@ -761,21 +943,36 @@ export function operatorPageHtml(version: string) {
 
         var gatewayFilter = $("gatewayFilter").value;
         var statusFilter = $("statusFilter").value;
+        var perPage = Number($("perPageSelect").value || 25);
+
         var params = new URLSearchParams();
-        params.set("limit", "100");
+        params.set("page", String(state.page));
+        params.set("perPage", String(perPage));
         if (gatewayFilter) params.set("gatewayId", gatewayFilter);
         if (statusFilter) params.set("status", statusFilter);
+
+        var metricsParams = new URLSearchParams();
+        if (gatewayFilter) metricsParams.set("gatewayId", gatewayFilter);
 
         try {
           var results = await Promise.all([
             api("/api/v1/gateways"),
-            api("/api/v1/messages?" + params.toString())
+            api("/api/v1/messages?" + params.toString()),
+            api("/api/v1/metrics?" + metricsParams.toString()),
+            api("/api/v1/audit?limit=20")
           ]);
 
           state.gateways = results[0].gateways || [];
           state.messages = results[1].messages || [];
+          state.pagination = results[1].pagination || state.pagination;
+          state.page = state.pagination.page;
+          state.metrics = results[2];
+          state.audit = results[3].logs || [];
+
           renderGateways();
           renderMessages();
+          renderMetrics();
+          renderAudit();
           setConnection(true, "Autenticado · actualización automática");
         } catch (error) {
           if (error.status === 401) {
@@ -784,6 +981,84 @@ export function operatorPageHtml(version: string) {
             setConnection(false, "Backend no disponible");
           }
           toast(error.message, true);
+        }
+      }
+
+      async function toggleGateway(gatewayId, currentlyEnabled) {
+        var nextEnabled = !currentlyEnabled;
+        var action = nextEnabled ? "habilitar" : "deshabilitar";
+        var note = window.prompt(
+          "Motivo para " + action + " " + gatewayId + ":"
+        );
+
+        if (note == null) return;
+        note = note.trim();
+
+        if (note.length < 3) {
+          toast("La nota debe tener al menos 3 caracteres.", true);
+          return;
+        }
+
+        if (!window.confirm(
+          "¿Confirmas " + action + " el gateway " + gatewayId + "?"
+        )) {
+          return;
+        }
+
+        try {
+          await api(
+            "/api/v1/gateways/" + encodeURIComponent(gatewayId),
+            {
+              method: "PATCH",
+              body: JSON.stringify({
+                enabled: nextEnabled,
+                note: note
+              })
+            }
+          );
+
+          toast(
+            "Gateway " + gatewayId + " " +
+            (nextEnabled ? "habilitado." : "deshabilitado.")
+          );
+          await refresh();
+        } catch (error) {
+          toast("No se pudo actualizar el gateway: " + error.message, true);
+        }
+      }
+
+      async function openDetail(jobId) {
+        try {
+          var detail = await api(
+            "/api/v1/messages/" + encodeURIComponent(jobId) + "/detail"
+          );
+
+          var m = detail.message;
+          var timeline = detail.timeline || [];
+
+          $("detailContent").innerHTML =
+            '<div class="mono" style="margin:10px 0">' +
+              escapeText(m.id) + '</div>' +
+            '<div><strong>' + escapeText(m.destination) + '</strong></div>' +
+            '<div style="margin-top:6px">' + escapeText(m.message) + '</div>' +
+            '<div class="muted" style="margin-top:8px">Gateway ' +
+              escapeText(m.gatewayId) + ' · intentos ' +
+              escapeText(m.attempts) + '</div>' +
+            '<div class="timeline">' +
+              timeline.map(function (event) {
+                return '<div class="timeline-item">' +
+                  '<div class="timeline-kind">' + escapeText(event.kind) + '</div>' +
+                  '<div class="muted">' + escapeText(fmt(event.at)) + '</div>' +
+                  (event.note
+                    ? '<div style="margin-top:3px">' + escapeText(event.note) + '</div>'
+                    : '') +
+                '</div>';
+              }).join("") +
+            '</div>';
+
+          $("detailDialog").showModal();
+        } catch (error) {
+          toast("No se pudo cargar el detalle: " + error.message, true);
         }
       }
 
@@ -882,6 +1157,7 @@ export function operatorPageHtml(version: string) {
         }
 
         sessionStorage.setItem("smsGatewayOperatorKey", state.key);
+        state.page = 1;
         refresh();
       });
 
@@ -891,14 +1167,53 @@ export function operatorPageHtml(version: string) {
         $("apiKey").value = "";
         state.gateways = [];
         state.messages = [];
+        state.metrics = null;
+        state.audit = [];
+        state.page = 1;
+        state.pagination = {
+          page: 1,
+          perPage: 25,
+          total: 0,
+          totalPages: 1
+        };
         renderGateways();
         renderMessages();
+        renderMetrics();
+        renderAudit();
         setConnection(null, "Sin autenticar");
       });
 
       $("refreshBtn").addEventListener("click", refresh);
-      $("gatewayFilter").addEventListener("change", refresh);
-      $("statusFilter").addEventListener("change", refresh);
+
+      $("gatewayFilter").addEventListener("change", function () {
+        state.page = 1;
+        refresh();
+      });
+
+      $("statusFilter").addEventListener("change", function () {
+        state.page = 1;
+        refresh();
+      });
+
+      $("perPageSelect").addEventListener("change", function () {
+        state.page = 1;
+        refresh();
+      });
+
+      $("prevPageBtn").addEventListener("click", function () {
+        if (state.pagination.page > 1) {
+          state.page = state.pagination.page - 1;
+          refresh();
+        }
+      });
+
+      $("nextPageBtn").addEventListener("click", function () {
+        if (state.pagination.page < state.pagination.totalPages) {
+          state.page = state.pagination.page + 1;
+          refresh();
+        }
+      });
+
       $("sendForm").addEventListener("submit", sendSms);
 
       $("message").addEventListener("input", function () {
@@ -907,6 +1222,10 @@ export function operatorPageHtml(version: string) {
 
       $("closeResolveBtn").addEventListener("click", function () {
         $("resolveDialog").close();
+      });
+
+      $("closeDetailBtn").addEventListener("click", function () {
+        $("detailDialog").close();
       });
 
       document.querySelectorAll("[data-resolution]").forEach(function (button) {
@@ -920,10 +1239,17 @@ export function operatorPageHtml(version: string) {
         refresh();
       } else {
         renderGateways();
+        renderMessages();
+        renderMetrics();
+        renderAudit();
       }
 
       state.timer = window.setInterval(function () {
-        if (state.key && !$("resolveDialog").open) {
+        if (
+          state.key &&
+          !$("resolveDialog").open &&
+          !$("detailDialog").open
+        ) {
           refresh();
         }
       }, 5000);

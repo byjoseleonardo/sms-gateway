@@ -28,6 +28,7 @@ model Gateway {
   updatedAt      DateTime     @updatedAt @map("updated_at")
   lastSeenAt     DateTime?    @map("last_seen_at")
   messages       SmsMessage[]
+  auditLogs      OperatorAuditLog[]
 
   @@index([lastSeenAt])
   @@map("gateways")
@@ -53,4 +54,19 @@ model SmsMessage {
 
   @@index([gatewayId, status, createdAt])
   @@map("sms_messages")
+}
+
+
+model OperatorAuditLog {
+  id        String   @id @db.VarChar(64)
+  action    String   @db.VarChar(64)
+  targetId  String   @map("target_id") @db.VarChar(128)
+  note      String?  @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  gatewayId String?  @map("gateway_id") @db.VarChar(64)
+  gateway   Gateway? @relation(fields: [gatewayId], references: [gatewayId], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([gatewayId, createdAt])
+  @@map("operator_audit_logs")
 }

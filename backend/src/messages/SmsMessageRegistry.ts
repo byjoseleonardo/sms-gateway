@@ -355,32 +355,200 @@ export class SmsMessageRegistry {
     return messages.map(toRecord);
   }
 
-  async list(input: {
+  async listPage(input: {
     gatewayId?: string;
     status?: SmsMessageStatus;
-    limit?: number;
+    page?: number;
+    perPage?: number;
   } = {}) {
-    const limit = Math.min(
-      Math.max(input.limit ?? 50, 1),
-      200
+    const page = Math.max(input.page ?? 1, 1);
+    const perPage = Math.min(
+      Math.max(input.perPage ?? 25, 5),
+      100
     );
 
-    const messages = await this.prisma.smsMessage.findMany({
-      where: {
-        ...(input.gatewayId
-          ? { gatewayId: input.gatewayId }
-          : {}),
-        ...(input.status
-          ? { status: input.status }
-          : {})
-      },
-      orderBy: {
-        createdAt: "desc"
-      },
-      take: limit
+    const where = {
+      ...(input.gatewayId
+        ? { gatewayId: input.gatewayId }
+        : {}),
+      ...(input.status
+        ? { status: input.status }
+        : {})
+    };
+
+    const [total, messages] = await this.prisma.$transaction([
+      this.prisma.smsMessage.count({
+        where
+      }),
+      this.prisma.smsMessage.findMany({
+        where,
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" }
+        ],
+        skip: (page - 1) * perPage,
+        take: perPage
+      })
+    ]);
+
+    return {
+      messages: messages.map(toRecord),
+      pagination: {
+        page,
+        perPage,
+        total,
+        totalPages: Math.max(
+          Math.ceil(total / perPage),
+          1
+        )
+      }
+    };
+  }
+
+  async metrics(gatewayId?: string) {
+    const where = gatewayId
+      ? { gatewayId }
+      : {};
+
+    const grouped = await this.prisma.smsMessage.groupBy({
+      by: ["status"],
+      where,
+      _count: {
+        _all: true
+      }
     });
 
-    return messages.map(toRecord);
+    const counts: Record<SmsMessageStatus, number> = {
+      QUEUED: 0,
+      CLAIMED: 0,
+      SENT: 0,
+      DELIVERED: 0,
+      FAILED: 0,
+      AMBIGUOUS: 0
+    };
+
+    for (const row of grouped) {
+      counts[row.status] = row._count._all;
+    }
+
+    const total = Object.values(counts)
+      .reduce((sum, value) => sum + value, 0);
+
+    const terminal =
+      counts.DELIVERED +
+      counts.FAILED +
+      counts.AMBIGUOUS;
+
+    const since = new Date(
+      Date.now() - 24 * 60 * 60 * 1_000
+    );
+
+    const last24h = await this.prisma.smsMessage.count({
+      where: {
+        ...where,
+        createdAt: {
+          gte: since
+        }
+      }
+    });
+
+    return {
+      total,
+      last24h,
+      counts,
+      deliveryRate:
+        terminal > 0
+          ? Number(
+              (
+                counts.DELIVERED /
+                terminal *
+                100
+              ).toFixed(1)
+            )
+          : null
+    };
+  }
+
+  async getDetail(jobId: string) {
+    const message = await this.prisma.smsMessage.findUnique({
+      where: {
+        id: jobId
+      }
+    });
+
+    if (!message) return null;
+
+    const record = toRecord(message);
+    const timeline: Array<{
+      kind: string;
+      at: string;
+      note?: string;
+    }> = [
+      {
+        kind: "QUEUED",
+        at: record.createdAt
+      }
+    ];
+
+    if (record.claimedAt) {
+      timeline.push({
+        kind: "CLAIMED",
+        at: record.claimedAt
+      });
+    }
+
+    if (record.sentAt) {
+      timeline.push({
+        kind: "SENT",
+        at: record.sentAt
+      });
+    }
+
+    if (record.deliveredAt) {
+      timeline.push({
+        kind: "DELIVERED",
+        at: record.deliveredAt
+      });
+    }
+
+    if (
+      record.status === "FAILED" &&
+      !record.operatorResolvedAt
+    ) {
+      timeline.push({
+        kind: "FAILED",
+        at: record.updatedAt,
+        note: record.lastError ?? undefined
+      });
+    }
+
+    if (record.status === "AMBIGUOUS") {
+      timeline.push({
+        kind: "AMBIGUOUS",
+        at: record.updatedAt,
+        note: record.lastError ?? undefined
+      });
+    }
+
+    if (record.operatorResolvedAt) {
+      timeline.push({
+        kind: `OPERATOR_RESOLVED_${record.status}`,
+        at: record.operatorResolvedAt,
+        note:
+          record.operatorResolutionNote ??
+          record.lastError ??
+          undefined
+      });
+    }
+
+    timeline.sort((a, b) =>
+      a.at.localeCompare(b.at)
+    );
+
+    return {
+      message: record,
+      timeline
+    };
   }
 
   async getAvailableForGateway(gatewayId: string) {
