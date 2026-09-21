@@ -3,8 +3,8 @@ package com.smsgateway.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.MaterialTheme
 import com.smsgateway.app.ui.SmsGatewayScreen
+import com.smsgateway.app.ui.theme.SmsGatewayTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -13,7 +13,7 @@ class MainActivity : ComponentActivity() {
         val application = application as SmsGatewayApplication
 
         setContent {
-            MaterialTheme {
+            SmsGatewayTheme {
                 SmsGatewayScreen(
                     jobs = application.smsJobStore.observeRecent(),
                     gatewaySettings = application.gatewaySettingsStore.settings,
