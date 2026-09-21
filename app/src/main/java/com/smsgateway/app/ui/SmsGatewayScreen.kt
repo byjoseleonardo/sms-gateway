@@ -252,7 +252,11 @@ fun SmsGatewayScreen(
                     subtitle = "Herramienta de prueba local",
                     expanded = manualSendExpanded,
                     onToggle = {
-                        manualSendExpanded = !manualSendExpanded
+                        val expand = !manualSendExpanded
+                        manualSendExpanded = expand
+                        if (expand) {
+                            settingsExpanded = false
+                        }
                     }
                 )
             }
@@ -333,7 +337,11 @@ fun SmsGatewayScreen(
                     subtitle = "Servidor, identidad y enrolamiento",
                     expanded = settingsExpanded,
                     onToggle = {
-                        settingsExpanded = !settingsExpanded
+                        val expand = !settingsExpanded
+                        settingsExpanded = expand
+                        if (expand) {
+                            manualSendExpanded = false
+                        }
                     }
                 )
             }
@@ -986,6 +994,12 @@ private fun BackendConnectionCard(
                 fontWeight = FontWeight.SemiBold
             )
 
+            Text(
+                text = "Ajustes técnicos del dispositivo. En el uso diario no necesitas modificarlos.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             OutlinedTextField(
                 value = serverUrl,
                 onValueChange = onServerUrlChange,
@@ -1020,6 +1034,7 @@ private fun BackendConnectionCard(
             )
 
             Surface(
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 color = when (connected) {
                     true ->
