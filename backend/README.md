@@ -289,7 +289,7 @@ Content-Type: application/json
 }
 ```
 
-`gatewayId` es opcional. Si se omite, el backend selecciona un gateway habilitado y Online. Esta selección simple será sustituida por pools/políticas de routing cuando se habilite multi-gateway.
+`gatewayId` es opcional. Si se omite, el backend selecciona automáticamente un gateway habilitado y Online usando balanceo por carga activa y, como segundo criterio, por asignaciones de las últimas 24 horas.
 
 La idempotencia está aislada por cliente: dos sistemas pueden usar la misma `idempotencyKey` sin colisionar. Repetir la misma clave dentro del mismo cliente devuelve el job existente y no consume cuota nuevamente.
 
@@ -326,3 +326,20 @@ La suite incluye pruebas PostgreSQL y HTTP aisladas para:
 - rechazo de credenciales inválidas.
 
 Las pruebas HTTP usan claves y gateways sintéticos y no despachan SMS reales.
+
+
+## Multi-gateway v0.17
+
+El backend puede trabajar con varios teléfonos Android registrados al mismo tiempo. Cada dispositivo conserva su propio `gatewayId`, token, heartbeat, estado de habilitación y cola de mensajes.
+
+El routing automático se usa cuando `gatewayId` se omite tanto en `POST /api/v1/client/messages` como en `POST /api/v1/messages`. Solo participan gateways habilitados cuyo heartbeat siga vigente.
+
+La selección prioriza:
+
+1. menor cantidad de jobs activos (`QUEUED` + `CLAIMED`);
+2. menor cantidad de mensajes asignados en las últimas 24 horas;
+3. `gatewayId` como desempate determinista.
+
+El panel de operador muestra la carga activa y las asignaciones de 24 horas de cada dispositivo. También permite fijar manualmente un gateway concreto cuando una integración o una prueba lo requiera.
+
+Para agregar un segundo teléfono basta instalar la app, configurarlo con un `gatewayId` distinto y enrolarlo con la clave correspondiente. No es necesario crear otro backend.

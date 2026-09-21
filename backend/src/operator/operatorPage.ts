@@ -652,13 +652,13 @@ export function operatorPageHtml(version: string) {
     <section class="grid">
       <aside class="panel compose">
         <h2 class="section-title">Nuevo SMS</h2>
-        <p class="section-copy">Crea un trabajo idempotente y lo entrega al gateway seleccionado.</p>
+        <p class="section-copy">Crea un trabajo idempotente y deja que el backend balancee la carga, o fija un gateway concreto.</p>
 
         <form id="sendForm">
           <div class="field">
             <label for="gatewaySelect">Gateway</label>
-            <select id="gatewaySelect" required>
-              <option value="">Conecta el panel primero</option>
+            <select id="gatewaySelect">
+              <option value="">Automático · balancear gateways online</option>
             </select>
           </div>
 
@@ -916,15 +916,17 @@ export function operatorPageHtml(version: string) {
         var currentSend = select.value;
         var currentFilter = filter.value;
 
-        select.innerHTML = "";
+        select.innerHTML =
+          '<option value="">Automático · balancear gateways online</option>';
         filter.innerHTML = '<option value="">Todos los gateways</option>';
 
         state.gateways.forEach(function (g) {
-          if (g.enabled) {
+          if (g.enabled && g.online) {
             var option = document.createElement("option");
             option.value = g.gatewayId;
             option.textContent =
-              g.gatewayId + (g.online ? " · online" : " · offline");
+              g.gatewayId + " · online · carga " +
+              String(g.activeJobs || 0);
             select.appendChild(option);
           }
 
@@ -937,7 +939,7 @@ export function operatorPageHtml(version: string) {
         if (
           currentSend &&
           state.gateways.some(function (g) {
-            return g.gatewayId === currentSend && g.enabled;
+            return g.gatewayId === currentSend && g.enabled && g.online;
           })
         ) {
           select.value = currentSend;
@@ -968,6 +970,9 @@ export function operatorPageHtml(version: string) {
             '<div><div class="gateway-name">' + escapeText(g.gatewayId) + '</div>' +
             '<div class="gateway-meta">' + escapeText(g.deviceModel) + ' · Android ' +
               escapeText(g.androidVersion) + ' · app ' + escapeText(g.appVersion) + '</div>' +
+            '<div class="gateway-meta">Carga activa: ' +
+              escapeText(g.activeJobs || 0) + ' · asignados 24 h: ' +
+              escapeText(g.assignedLast24h || 0) + '</div>' +
             '<div class="gateway-meta">Último heartbeat: ' + escapeText(fmt(g.lastSeenAt)) + '</div>' +
             (g.tokenRotatedAt
               ? '<div class="gateway-meta">Token rotado: ' + escapeText(fmt(g.tokenRotatedAt)) + '</div>'
@@ -1668,8 +1673,8 @@ export function operatorPageHtml(version: string) {
         var destination = $("destination").value.trim();
         var message = $("message").value;
 
-        if (!gatewayId || !destination || !message) {
-          toast("Completa gateway, destino y mensaje.", true);
+        if (!destination || !message) {
+          toast("Completa destino y mensaje.", true);
           return;
         }
 
@@ -1679,17 +1684,26 @@ export function operatorPageHtml(version: string) {
 
         try {
           var idempotencyKey = "operator-" + crypto.randomUUID();
+          var payload = {
+            idempotencyKey: idempotencyKey,
+            destination: destination,
+            message: message
+          };
+
+          if (gatewayId) {
+            payload.gatewayId = gatewayId;
+          }
+
           var result = await api("/api/v1/messages", {
             method: "POST",
-            body: JSON.stringify({
-              idempotencyKey: idempotencyKey,
-              gatewayId: gatewayId,
-              destination: destination,
-              message: message
-            })
+            body: JSON.stringify(payload)
           });
 
-          toast(result.created ? "SMS encolado correctamente." : "La solicitud ya existía.");
+          toast(
+            result.created
+              ? "SMS encolado en " + result.message.gatewayId + "."
+              : "La solicitud ya existía en " + result.message.gatewayId + "."
+          );
           $("message").value = "";
           $("charCount").textContent = "0/160";
           await refresh();

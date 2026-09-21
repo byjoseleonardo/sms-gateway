@@ -15,7 +15,7 @@ import { operatorPageHtml } from "./operator/operatorPage.js";
 import { operatorApiKeyAuth } from "./security/operatorApiKeyAuth.js";
 import { gatewayEnrollmentAuth } from "./security/gatewayEnrollmentAuth.js";
 
-export const APP_VERSION = "0.16.0";
+export const APP_VERSION = "0.17.0";
 
 const registrationSchema = z.object({
   gatewayId: z.string().trim().min(3).max(64),
@@ -31,7 +31,7 @@ const heartbeatSchema = z.object({
 
 const enqueueMessageSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128),
-  gatewayId: z.string().trim().min(3).max(64),
+  gatewayId: z.string().trim().min(3).max(64).optional(),
   destination: z.string().trim().regex(/^\+[1-9]\d{7,14}$/),
   message: z.string().min(1).max(160)
 });
@@ -573,16 +573,44 @@ export function createApp(
       return;
     }
 
-    const gateway = await gatewayRegistry.getStatus(parsed.data.gatewayId);
+    const existing =
+      await messageRegistry.getByIdempotency(
+        "operator",
+        parsed.data.idempotencyKey
+      );
 
-    if (!gateway || !gateway.enabled) {
-      res.status(404).json({
-        error: "gateway_not_available"
+    if (existing) {
+      res.status(200).json({
+        created: false,
+        message: existing
       });
       return;
     }
 
-    const result = await messageRegistry.enqueue(parsed.data);
+    const gateway =
+      parsed.data.gatewayId
+        ? await gatewayRegistry.getStatus(
+            parsed.data.gatewayId
+          )
+        : await gatewayRegistry.selectAvailableGateway();
+
+    if (
+      !gateway ||
+      !gateway.enabled ||
+      !gateway.online
+    ) {
+      res.status(503).json({
+        error: "no_gateway_available"
+      });
+      return;
+    }
+
+    const result = await messageRegistry.enqueue({
+      idempotencyKey: parsed.data.idempotencyKey,
+      gatewayId: gateway.gatewayId,
+      destination: parsed.data.destination,
+      message: parsed.data.message
+    });
 
     if (
       result.message.status === "QUEUED" ||

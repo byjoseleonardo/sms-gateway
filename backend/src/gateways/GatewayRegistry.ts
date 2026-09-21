@@ -195,6 +195,59 @@ export class GatewayRegistry {
     });
 
     const now = Date.now();
+    const gatewayIds = gateways.map(
+      gateway => gateway.gatewayId
+    );
+
+    const [activeRows, recentRows] =
+      gatewayIds.length > 0
+        ? await Promise.all([
+            this.prisma.smsMessage.groupBy({
+              by: ["gatewayId"],
+              where: {
+                gatewayId: {
+                  in: gatewayIds
+                },
+                status: {
+                  in: ["QUEUED", "CLAIMED"]
+                }
+              },
+              _count: {
+                _all: true
+              }
+            }),
+            this.prisma.smsMessage.groupBy({
+              by: ["gatewayId"],
+              where: {
+                gatewayId: {
+                  in: gatewayIds
+                },
+                createdAt: {
+                  gte: new Date(
+                    now - ROUTING_HISTORY_WINDOW_MS
+                  )
+                }
+              },
+              _count: {
+                _all: true
+              }
+            })
+          ])
+        : [[], []];
+
+    const activeByGateway = new Map(
+      activeRows.map(row => [
+        row.gatewayId,
+        row._count._all
+      ])
+    );
+
+    const recentByGateway = new Map(
+      recentRows.map(row => [
+        row.gatewayId,
+        row._count._all
+      ])
+    );
 
     return gateways.map(gateway => {
       const lastSeenMs =
@@ -206,12 +259,16 @@ export class GatewayRegistry {
         online:
           gateway.enabled &&
           lastSeenMs > 0 &&
-          now - lastSeenMs < 45_000,
+          now - lastSeenMs < ONLINE_WINDOW_MS,
         lastSeenAt:
           gateway.lastSeenAt?.toISOString() ?? null,
         deviceModel: gateway.deviceModel,
         androidVersion: gateway.androidVersion,
         appVersion: gateway.appVersion,
+        activeJobs:
+          activeByGateway.get(gateway.gatewayId) ?? 0,
+        assignedLast24h:
+          recentByGateway.get(gateway.gatewayId) ?? 0,
         tokenRotationPendingUntil:
           gateway.pendingTokenExpiresAt &&
           gateway.pendingTokenExpiresAt.getTime() > now
@@ -224,30 +281,98 @@ export class GatewayRegistry {
   }
 
   async selectAvailableGateway() {
+    const now = Date.now();
     const cutoff = new Date(
-      Date.now() - 45_000
+      now - ONLINE_WINDOW_MS
     );
 
-    const gateway = await this.prisma.gateway.findFirst({
+    const gateways = await this.prisma.gateway.findMany({
       where: {
         enabled: true,
         lastSeenAt: {
           gte: cutoff
         }
       },
-      orderBy: [
-        {
-          lastSeenAt: "desc"
-        },
-        {
-          gatewayId: "asc"
-        }
-      ]
+      orderBy: {
+        gatewayId: "asc"
+      }
     });
 
-    return gateway
-      ? toGatewayStatus(gateway)
-      : null;
+    if (gateways.length === 0) {
+      return null;
+    }
+
+    const gatewayIds = gateways.map(
+      gateway => gateway.gatewayId
+    );
+
+    const [activeRows, recentRows] = await Promise.all([
+      this.prisma.smsMessage.groupBy({
+        by: ["gatewayId"],
+        where: {
+          gatewayId: {
+            in: gatewayIds
+          },
+          status: {
+            in: ["QUEUED", "CLAIMED"]
+          }
+        },
+        _count: {
+          _all: true
+        }
+      }),
+      this.prisma.smsMessage.groupBy({
+        by: ["gatewayId"],
+        where: {
+          gatewayId: {
+            in: gatewayIds
+          },
+          createdAt: {
+            gte: new Date(
+              now - ROUTING_HISTORY_WINDOW_MS
+            )
+          }
+        },
+        _count: {
+          _all: true
+        }
+      })
+    ]);
+
+    const activeByGateway = new Map(
+      activeRows.map(row => [
+        row.gatewayId,
+        row._count._all
+      ])
+    );
+
+    const recentByGateway = new Map(
+      recentRows.map(row => [
+        row.gatewayId,
+        row._count._all
+      ])
+    );
+
+    const candidate = pickGatewayForRouting(
+      gateways.map(gateway => ({
+        gateway,
+        gatewayId: gateway.gatewayId,
+        activeJobs:
+          activeByGateway.get(gateway.gatewayId) ?? 0,
+        assignedLast24h:
+          recentByGateway.get(gateway.gatewayId) ?? 0
+      }))
+    );
+
+    if (!candidate) {
+      return null;
+    }
+
+    return {
+      ...toGatewayStatus(candidate.gateway),
+      activeJobs: candidate.activeJobs,
+      assignedLast24h: candidate.assignedLast24h
+    };
   }
 
   async setEnabled(
@@ -479,6 +604,28 @@ function toGatewayRecord(gateway: {
     lastSeenAt: gateway.lastSeenAt?.toISOString() ?? null
   };
 }
+
+export function pickGatewayForRouting<
+  T extends {
+    gatewayId: string;
+    activeJobs: number;
+    assignedLast24h: number;
+  }
+>(candidates: T[]): T | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return [...candidates].sort((left, right) =>
+    left.activeJobs - right.activeJobs ||
+    left.assignedLast24h - right.assignedLast24h ||
+    left.gatewayId.localeCompare(right.gatewayId)
+  )[0] ?? null;
+}
+
+const ONLINE_WINDOW_MS = 45_000;
+const ROUTING_HISTORY_WINDOW_MS =
+  24 * 60 * 60 * 1_000;
 
 const TOKEN_ROTATION_TTL_MS = 5 * 60 * 1_000;
 
