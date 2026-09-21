@@ -147,6 +147,10 @@ export function createApp(
   const clientReadAuth =
     apiClientAuth(apiClientRegistry, "sms:read");
 
+  app.get("/", (_req, res) => {
+    res.redirect(302, "/operator");
+  });
+
   app.get("/operator", (_req, res) => {
     res
       .status(200)
